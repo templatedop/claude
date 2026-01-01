@@ -9,6 +9,7 @@ import (
 	"syscall"
 
 	"github.com/anthropics/claude-orchestrator/internal/activity"
+	"github.com/anthropics/claude-orchestrator/internal/config"
 	"github.com/anthropics/claude-orchestrator/internal/memory"
 	"github.com/anthropics/claude-orchestrator/internal/workflow"
 	"go.temporal.io/sdk/client"
@@ -16,21 +17,36 @@ import (
 )
 
 func main() {
-	// Get configuration from environment
-	temporalAddr := getEnv("TEMPORAL_ADDRESS", "localhost:7233")
-	temporalNS := getEnv("TEMPORAL_NAMESPACE", "default")
-	taskQueue := getEnv("TASK_QUEUE", workflow.TaskQueueName)
-	claudeAPIKey := getEnv("ANTHROPIC_API_KEY", "")
+	// Load configuration
+	configPath := os.Getenv("CONFIG_PATH")
+	cfg, err := config.LoadConfig(configPath)
+	if err != nil && configPath != "" {
+		log.Printf("Warning: Failed to load config from %s: %v", configPath, err)
+		cfg = config.DefaultConfig()
+	}
+
+	// Apply environment overrides for backwards compatibility
+	if apiKey := os.Getenv("ANTHROPIC_API_KEY"); apiKey != "" {
+		cfg.Claude.APIKey = apiKey
+	}
 	workingDir := getEnv("WORKING_DIR", ".")
 
-	if claudeAPIKey == "" {
+	if cfg.Claude.APIKey == "" {
 		log.Println("Warning: ANTHROPIC_API_KEY not set. Claude activities will fail.")
 	}
 
+	// Log feature status
+	log.Println("Feature Status:")
+	log.Printf("  - Document Analysis: %v", cfg.Features.DocumentAnalysis.Enabled)
+	log.Printf("  - Requirements Tracking: %v", cfg.Features.RequirementsTracking.Enabled)
+	log.Printf("  - Framework Learning: %v", cfg.Features.FrameworkLearning.Enabled)
+	log.Printf("  - Code Review: %v", cfg.Features.CodeReview)
+	log.Printf("  - Parallel Execution: %v", cfg.Features.ParallelExecution)
+
 	// Create Temporal client
 	c, err := client.Dial(client.Options{
-		HostPort:  temporalAddr,
-		Namespace: temporalNS,
+		HostPort:  cfg.Temporal.Address,
+		Namespace: cfg.Temporal.Namespace,
 	})
 	if err != nil {
 		log.Fatalf("Failed to create Temporal client: %v", err)
@@ -38,13 +54,33 @@ func main() {
 	defer c.Close()
 
 	// Create memory store
-	memoryStore := memory.NewInMemoryStore()
+	var memoryStore memory.Store
+	switch cfg.Memory.Type {
+	case "postgres":
+		pgCfg := memory.PostgresConfig{
+			Host:     cfg.Memory.Postgres.Host,
+			Port:     cfg.Memory.Postgres.Port,
+			Database: cfg.Memory.Postgres.Database,
+			User:     cfg.Memory.Postgres.User,
+			Password: cfg.Memory.Postgres.Password,
+			SSLMode:  cfg.Memory.Postgres.SSLMode,
+		}
+		store, err := memory.NewPostgresStore(pgCfg)
+		if err != nil {
+			log.Printf("Failed to create PostgreSQL store, falling back to in-memory: %v", err)
+			memoryStore = memory.NewInMemoryStore()
+		} else {
+			memoryStore = store
+		}
+	default:
+		memoryStore = memory.NewInMemoryStore()
+	}
 	defer memoryStore.Close()
 
-	// Create activities
+	// Create core activities
 	var claudeActivities *activity.ClaudeActivities
-	if claudeAPIKey != "" {
-		claudeActivities, err = activity.NewClaudeActivities(claudeAPIKey)
+	if cfg.Claude.APIKey != "" {
+		claudeActivities, err = activity.NewClaudeActivities(cfg.Claude.APIKey)
 		if err != nil {
 			log.Fatalf("Failed to create Claude activities: %v", err)
 		}
@@ -54,8 +90,31 @@ func main() {
 	gitActivities := activity.NewGitActivities(workingDir)
 	memoryActivities := activity.NewMemoryActivities(memoryStore)
 
+	// Create feature-specific activities
+	var documentActivities *activity.DocumentActivities
+	var requirementsActivities *activity.RequirementsActivities
+	var frameworkActivities *activity.FrameworkActivities
+
+	if cfg.Features.DocumentAnalysis.Enabled && cfg.Claude.APIKey != "" {
+		documentActivities, err = activity.NewDocumentActivities(cfg.Claude.APIKey)
+		if err != nil {
+			log.Printf("Warning: Failed to create document activities: %v", err)
+		}
+	}
+
+	if cfg.Features.RequirementsTracking.Enabled {
+		requirementsActivities = activity.NewRequirementsActivities(memoryStore)
+	}
+
+	if cfg.Features.FrameworkLearning.Enabled && cfg.Claude.APIKey != "" {
+		frameworkActivities, err = activity.NewFrameworkActivities(cfg.Claude.APIKey, memoryStore)
+		if err != nil {
+			log.Printf("Warning: Failed to create framework activities: %v", err)
+		}
+	}
+
 	// Create worker
-	w := worker.New(c, taskQueue, worker.Options{
+	w := worker.New(c, cfg.Temporal.TaskQueue, worker.Options{
 		MaxConcurrentActivityExecutionSize:     10,
 		MaxConcurrentWorkflowTaskExecutionSize: 10,
 	})
@@ -69,7 +128,7 @@ func main() {
 	w.RegisterWorkflow(workflow.ReviewerWorkflow)
 	w.RegisterWorkflow(workflow.ExecutorWorkflow)
 
-	// Register activities
+	// Register core activities
 	if claudeActivities != nil {
 		w.RegisterActivity(claudeActivities.Complete)
 		w.RegisterActivity(claudeActivities.DecomposeTask)
@@ -101,6 +160,31 @@ func main() {
 	w.RegisterActivity(memoryActivities.ListKeys)
 	w.RegisterActivity(memoryActivities.Clear)
 
+	// Register feature-specific activities
+	if documentActivities != nil {
+		w.RegisterActivity(documentActivities.ReadDocument)
+		w.RegisterActivity(documentActivities.AnalyzeRequirements)
+		log.Println("Registered document analysis activities")
+	}
+
+	if requirementsActivities != nil {
+		w.RegisterActivity(requirementsActivities.StoreRequirement)
+		w.RegisterActivity(requirementsActivities.GetRequirement)
+		w.RegisterActivity(requirementsActivities.ListRequirements)
+		w.RegisterActivity(requirementsActivities.UpdateRequirementStatus)
+		w.RegisterActivity(requirementsActivities.LinkImplementation)
+		w.RegisterActivity(requirementsActivities.GetRequirementsSummary)
+		log.Println("Registered requirements tracking activities")
+	}
+
+	if frameworkActivities != nil {
+		w.RegisterActivity(frameworkActivities.LearnFramework)
+		w.RegisterActivity(frameworkActivities.GetFrameworkKnowledge)
+		w.RegisterActivity(frameworkActivities.GenerateFrameworkPrompt)
+		w.RegisterActivity(frameworkActivities.ListFrameworks)
+		log.Println("Registered framework learning activities")
+	}
+
 	// Start worker in background
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -111,8 +195,8 @@ func main() {
 		}
 	}()
 
-	log.Printf("Worker started on task queue: %s", taskQueue)
-	log.Printf("Temporal address: %s", temporalAddr)
+	log.Printf("Worker started on task queue: %s", cfg.Temporal.TaskQueue)
+	log.Printf("Temporal address: %s", cfg.Temporal.Address)
 	log.Printf("Working directory: %s", workingDir)
 
 	// Wait for shutdown signal
