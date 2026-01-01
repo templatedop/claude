@@ -6,6 +6,9 @@ CREATE DATABASE claude_orchestrator;
 -- Connect to the memory database
 \c claude_orchestrator;
 
+-- Enable pgvector extension for embeddings
+CREATE EXTENSION IF NOT EXISTS vector;
+
 -- Create memory schema
 CREATE SCHEMA IF NOT EXISTS memory;
 

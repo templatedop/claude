@@ -1,0 +1,35 @@
+{{- if and .Values.worker.enabled .Values.worker.persistence.workspace.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "claude-orchestrator.fullname" . }}-workspace
+  labels:
+    {{- include "claude-orchestrator.worker.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - {{ .Values.worker.persistence.workspace.accessMode }}
+  {{- if .Values.worker.persistence.workspace.storageClass }}
+  storageClassName: {{ .Values.worker.persistence.workspace.storageClass | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.worker.persistence.workspace.size }}
+---
+{{- end }}
+{{- if and .Values.worker.enabled .Values.worker.persistence.storage.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "claude-orchestrator.fullname" . }}-storage
+  labels:
+    {{- include "claude-orchestrator.worker.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - {{ .Values.worker.persistence.storage.accessMode }}
+  {{- if .Values.worker.persistence.storage.storageClass }}
+  storageClassName: {{ .Values.worker.persistence.storage.storageClass | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.worker.persistence.storage.size }}
+{{- end }}

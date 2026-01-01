@@ -1,0 +1,167 @@
+{{- if .Values.worker.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "claude-orchestrator.fullname" . }}-worker
+  labels:
+    {{- include "claude-orchestrator.worker.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.worker.autoscaling.enabled }}
+  replicas: {{ .Values.worker.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "claude-orchestrator.worker.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secrets.yaml") . | sha256sum }}
+        {{- with .Values.worker.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "claude-orchestrator.worker.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "claude-orchestrator.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.worker.podSecurityContext | nindent 8 }}
+      containers:
+        - name: worker
+          securityContext:
+            {{- toYaml .Values.worker.securityContext | nindent 12 }}
+          image: {{ include "claude-orchestrator.worker.image" . }}
+          imagePullPolicy: {{ .Values.worker.image.pullPolicy }}
+          env:
+            # Temporal
+            - name: TEMPORAL_ADDRESS
+              value: {{ include "claude-orchestrator.temporalAddress" . | quote }}
+            - name: TEMPORAL_NAMESPACE
+              value: {{ .Values.config.temporal.namespace | quote }}
+            - name: TASK_QUEUE
+              value: {{ .Values.config.temporal.taskQueue | quote }}
+            # Claude API
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "claude-orchestrator.anthropicSecretName" . }}
+                  key: {{ .Values.secrets.anthropicApiKeySecretKey }}
+            # Working directory
+            - name: WORKING_DIR
+              value: /app/workspace
+            - name: CONFIG_PATH
+              value: /app/config/config.json
+            # Memory/PostgreSQL
+            - name: MEMORY_TYPE
+              value: {{ .Values.config.memory.type | quote }}
+            {{- if .Values.postgresql.enabled }}
+            - name: POSTGRES_HOST
+              value: {{ include "claude-orchestrator.postgresHost" . | quote }}
+            - name: POSTGRES_PORT
+              value: "5432"
+            - name: POSTGRES_USER
+              value: {{ .Values.postgresql.auth.username | quote }}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "claude-orchestrator.fullname" . }}-postgresql
+                  key: password
+            - name: POSTGRES_DB
+              value: {{ .Values.postgresql.auth.database | quote }}
+            {{- end }}
+            # Storage
+            - name: FEATURE_STORAGE
+              value: {{ .Values.config.features.storage | quote }}
+            - name: STORAGE_TYPE
+              value: {{ .Values.config.storage.type | quote }}
+            {{- if .Values.minio.enabled }}
+            - name: S3_ENDPOINT
+              value: {{ include "claude-orchestrator.minioEndpoint" . | quote }}
+            - name: AWS_ACCESS_KEY_ID
+              value: {{ .Values.minio.rootUser | quote }}
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "claude-orchestrator.fullname" . }}-minio
+                  key: root-password
+            - name: S3_BUCKET
+              value: {{ .Values.config.storage.bucket | quote }}
+            - name: S3_PATH_STYLE
+              value: "true"
+            - name: AWS_REGION
+              value: "us-east-1"
+            {{- end }}
+            # RAG
+            - name: FEATURE_RAG
+              value: {{ .Values.config.features.rag | quote }}
+            - name: EMBEDDING_PROVIDER
+              value: {{ .Values.config.rag.embedding.provider | quote }}
+            - name: EMBEDDING_MODEL
+              value: {{ .Values.config.rag.embedding.model | quote }}
+            {{- if .Values.secrets.openaiApiKey }}
+            - name: EMBEDDING_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "claude-orchestrator.openaiSecretName" . }}
+                  key: {{ .Values.secrets.openaiApiKeySecretKey }}
+            {{- end }}
+            # Features
+            - name: FEATURE_DOC_ANALYSIS
+              value: {{ .Values.config.features.documentAnalysis | quote }}
+            - name: FEATURE_REQ_TRACKING
+              value: {{ .Values.config.features.requirementsTracking | quote }}
+            - name: FEATURE_FRAMEWORK_LEARNING
+              value: {{ .Values.config.features.frameworkLearning | quote }}
+            - name: FEATURE_CODE_REVIEW
+              value: {{ .Values.config.features.codeReview | quote }}
+            - name: FEATURE_PARALLEL_EXECUTION
+              value: {{ .Values.config.features.parallelExecution | quote }}
+          volumeMounts:
+            - name: config
+              mountPath: /app/config
+              readOnly: true
+            - name: workspace
+              mountPath: /app/workspace
+            - name: storage
+              mountPath: /app/storage
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            {{- toYaml .Values.worker.resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "claude-orchestrator.fullname" . }}-config
+        - name: workspace
+          {{- if .Values.worker.persistence.workspace.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "claude-orchestrator.fullname" . }}-workspace
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        - name: storage
+          {{- if .Values.worker.persistence.storage.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "claude-orchestrator.fullname" . }}-storage
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        - name: tmp
+          emptyDir: {}
+      {{- with .Values.worker.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.worker.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.worker.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

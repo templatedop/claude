@@ -1,0 +1,293 @@
+# Default values for claude-orchestrator.
+
+# Global settings
+global:
+  imageRegistry: ""
+  imagePullSecrets: []
+
+# Common labels
+commonLabels: {}
+commonAnnotations: {}
+
+# =============================================================================
+# Worker Configuration
+# =============================================================================
+worker:
+  enabled: true
+  replicaCount: 1
+
+  image:
+    repository: claude-orchestrator-worker
+    pullPolicy: IfNotPresent
+    tag: ""  # Defaults to chart appVersion
+
+  # Pod configuration
+  podAnnotations: {}
+  podSecurityContext:
+    fsGroup: 1000
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    readOnlyRootFilesystem: true
+
+  # Resources
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 256Mi
+
+  # Autoscaling
+  autoscaling:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 80
+
+  # Node selection
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+  # Volume mounts
+  persistence:
+    workspace:
+      enabled: true
+      size: 10Gi
+      storageClass: ""
+      accessMode: ReadWriteOnce
+    storage:
+      enabled: true
+      size: 20Gi
+      storageClass: ""
+      accessMode: ReadWriteOnce
+
+# =============================================================================
+# API Configuration
+# =============================================================================
+api:
+  enabled: true
+  replicaCount: 2
+
+  image:
+    repository: claude-orchestrator-api
+    pullPolicy: IfNotPresent
+    tag: ""
+
+  # Service configuration
+  service:
+    type: ClusterIP
+    port: 8080
+    annotations: {}
+
+  # Ingress configuration
+  ingress:
+    enabled: false
+    className: ""
+    annotations: {}
+    hosts:
+      - host: claude-orchestrator.local
+        paths:
+          - path: /
+            pathType: Prefix
+    tls: []
+
+  # Pod configuration
+  podAnnotations: {}
+  podSecurityContext:
+    fsGroup: 1000
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    readOnlyRootFilesystem: true
+
+  # Resources
+  resources:
+    limits:
+      cpu: 200m
+      memory: 256Mi
+    requests:
+      cpu: 50m
+      memory: 128Mi
+
+  # Autoscaling
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 80
+
+  # Node selection
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# =============================================================================
+# Configuration
+# =============================================================================
+config:
+  # Temporal connection
+  temporal:
+    address: "temporal-frontend:7233"
+    namespace: "default"
+    taskQueue: "claude-orchestrator"
+
+  # Claude API
+  claude:
+    model: "claude-sonnet-4-20250514"
+    maxTokens: 4096
+    temperature: 0.7
+
+  # Memory configuration
+  memory:
+    type: "postgres"  # inmemory, postgres
+
+  # Feature flags
+  features:
+    documentAnalysis: true
+    requirementsTracking: true
+    frameworkLearning: true
+    codeReview: true
+    parallelExecution: true
+    storage: true
+    rag: true
+
+  # Storage configuration
+  storage:
+    type: "s3"  # local, s3, minio
+    bucket: "orchestrator"
+    # S3/MinIO settings pulled from minio subchart if enabled
+
+  # RAG configuration
+  rag:
+    embedding:
+      provider: "openai"
+      model: "text-embedding-3-small"
+      dimensions: 1536
+    chunking:
+      strategy: "sentence"
+      chunkSize: 1000
+      chunkOverlap: 200
+
+# =============================================================================
+# Secrets
+# =============================================================================
+secrets:
+  # Create secrets or reference existing ones
+  create: true
+
+  # Anthropic API key (required)
+  anthropicApiKey: ""
+  anthropicApiKeyExistingSecret: ""
+  anthropicApiKeySecretKey: "api-key"
+
+  # OpenAI API key for embeddings (optional)
+  openaiApiKey: ""
+  openaiApiKeyExistingSecret: ""
+  openaiApiKeySecretKey: "api-key"
+
+  # PostgreSQL credentials (if using external)
+  postgresPassword: ""
+  postgresPasswordExistingSecret: ""
+  postgresPasswordSecretKey: "password"
+
+# =============================================================================
+# Service Account
+# =============================================================================
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+# =============================================================================
+# Dependencies
+# =============================================================================
+
+# Temporal subchart
+temporal:
+  enabled: true
+  server:
+    replicaCount: 1
+  cassandra:
+    enabled: false
+  mysql:
+    enabled: false
+  postgresql:
+    enabled: false  # We use our own PostgreSQL
+  prometheus:
+    enabled: false
+  grafana:
+    enabled: false
+  elasticsearch:
+    enabled: false
+
+# PostgreSQL subchart
+postgresql:
+  enabled: true
+  auth:
+    username: orchestrator
+    password: ""  # Auto-generated if empty
+    database: claude_orchestrator
+  primary:
+    persistence:
+      enabled: true
+      size: 10Gi
+
+# MinIO subchart
+minio:
+  enabled: true
+  mode: standalone
+  replicas: 1
+  persistence:
+    enabled: true
+    size: 50Gi
+  rootUser: minioadmin
+  rootPassword: ""  # Auto-generated if empty
+  buckets:
+    - name: orchestrator
+      policy: none
+    - name: documents
+      policy: none
+    - name: embeddings
+      policy: none
+  resources:
+    requests:
+      memory: 256Mi
+
+# =============================================================================
+# Monitoring
+# =============================================================================
+metrics:
+  enabled: false
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    labels: {}
+
+# =============================================================================
+# Network Policies
+# =============================================================================
+networkPolicy:
+  enabled: false
+  ingress: []
+  egress: []
+
+# =============================================================================
+# Pod Disruption Budget
+# =============================================================================
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1
+  # maxUnavailable: 1

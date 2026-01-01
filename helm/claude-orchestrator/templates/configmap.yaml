@@ -1,0 +1,56 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "claude-orchestrator.fullname" . }}-config
+  labels:
+    {{- include "claude-orchestrator.labels" . | nindent 4 }}
+data:
+  config.json: |
+    {
+      "temporal": {
+        "address": "{{ include "claude-orchestrator.temporalAddress" . }}",
+        "namespace": {{ .Values.config.temporal.namespace | quote }},
+        "task_queue": {{ .Values.config.temporal.taskQueue | quote }}
+      },
+      "claude": {
+        "model": {{ .Values.config.claude.model | quote }},
+        "max_tokens": {{ .Values.config.claude.maxTokens }},
+        "temperature": {{ .Values.config.claude.temperature }}
+      },
+      "memory": {
+        "type": {{ .Values.config.memory.type | quote }}
+      },
+      "storage": {
+        "enabled": {{ .Values.config.features.storage }},
+        "type": {{ .Values.config.storage.type | quote }},
+        "s3": {
+          "bucket": {{ .Values.config.storage.bucket | quote }}
+        }
+      },
+      "rag": {
+        "enabled": {{ .Values.config.features.rag }},
+        "embedding": {
+          "provider": {{ .Values.config.rag.embedding.provider | quote }},
+          "model": {{ .Values.config.rag.embedding.model | quote }},
+          "dimensions": {{ .Values.config.rag.embedding.dimensions }}
+        },
+        "chunking": {
+          "strategy": {{ .Values.config.rag.chunking.strategy | quote }},
+          "chunk_size": {{ .Values.config.rag.chunking.chunkSize }},
+          "chunk_overlap": {{ .Values.config.rag.chunking.chunkOverlap }}
+        }
+      },
+      "features": {
+        "document_analysis": {
+          "enabled": {{ .Values.config.features.documentAnalysis }}
+        },
+        "requirements_tracking": {
+          "enabled": {{ .Values.config.features.requirementsTracking }}
+        },
+        "framework_learning": {
+          "enabled": {{ .Values.config.features.frameworkLearning }}
+        },
+        "code_review": {{ .Values.config.features.codeReview }},
+        "parallel_execution": {{ .Values.config.features.parallelExecution }}
+      }
+    }

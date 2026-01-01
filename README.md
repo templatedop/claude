@@ -792,12 +792,33 @@ claude-orchestrator/
 # Set your API key
 export ANTHROPIC_API_KEY=your-api-key
 
-# Start all services
+# Start all services (Temporal, PostgreSQL, MinIO, Worker, API)
 docker-compose up -d
 
 # View logs
 docker-compose logs -f worker
+
+# Start with full stack (includes Redis)
+docker-compose --profile full up -d
+
+# Start with development tools
+docker-compose --profile dev up -d
+
+# Use CLI
+docker-compose --profile cli run cli status <workflow-id>
 ```
+
+### Services
+
+| Service | Port | Description |
+|---------|------|-------------|
+| temporal | 7233 | Temporal server gRPC |
+| temporal-ui | 8233 | Temporal Web UI |
+| postgres | 5432 | PostgreSQL database |
+| minio | 9000/9001 | MinIO API/Console |
+| worker | - | Orchestrator worker |
+| api | 8080 | REST API server |
+| redis | 6379 | Redis cache (full profile) |
 
 ### Building Images
 
@@ -809,7 +830,190 @@ make docker-build
 docker build --target worker -t claude-orchestrator-worker .
 docker build --target api -t claude-orchestrator-api .
 docker build --target cli -t claude-orchestrator-cli .
+docker build --target all -t claude-orchestrator .
 ```
+
+## Kubernetes Deployment (Helm)
+
+### Prerequisites
+
+- Kubernetes cluster 1.19+
+- Helm 3.x
+- kubectl configured
+
+### Installing the Chart
+
+```bash
+# Add required repositories
+helm repo add bitnami https://charts.bitnami.com/bitnami
+
+# Install with default values
+helm install claude-orchestrator ./helm/claude-orchestrator \
+  --set secrets.anthropicApiKey=your-api-key
+
+# Install with custom values
+helm install claude-orchestrator ./helm/claude-orchestrator \
+  -f my-values.yaml
+
+# Install with external Temporal
+helm install claude-orchestrator ./helm/claude-orchestrator \
+  --set temporal.enabled=false \
+  --set temporal.externalAddress=temporal.example.com:7233 \
+  --set secrets.anthropicApiKey=your-api-key
+```
+
+### Configuration
+
+Create a `values.yaml` file to customize:
+
+```yaml
+# Worker configuration
+worker:
+  replicaCount: 2
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
+
+# API configuration
+api:
+  replicaCount: 2
+  ingress:
+    enabled: true
+    className: nginx
+    hosts:
+      - host: orchestrator.example.com
+        paths:
+          - path: /
+            pathType: Prefix
+    tls:
+      - hosts:
+          - orchestrator.example.com
+        secretName: orchestrator-tls
+
+# Feature toggles
+config:
+  features:
+    storage: true
+    rag: true
+    documentAnalysis: true
+    requirementsTracking: true
+    frameworkLearning: true
+  storage:
+    type: minio  # local, s3, minio
+  rag:
+    embeddingProvider: openai
+    embeddingModel: text-embedding-3-small
+
+# Dependencies
+postgresql:
+  enabled: true
+  auth:
+    postgresPassword: "changeme"
+
+minio:
+  enabled: true
+  auth:
+    rootUser: minioadmin
+    rootPassword: minioadmin
+
+# Secrets (use sealed-secrets or external-secrets in production)
+secrets:
+  anthropicApiKey: ""
+  embeddingApiKey: ""
+```
+
+### Upgrading
+
+```bash
+helm upgrade claude-orchestrator ./helm/claude-orchestrator -f my-values.yaml
+```
+
+### Uninstalling
+
+```bash
+helm uninstall claude-orchestrator
+```
+
+## MCP Integration (Model Context Protocol)
+
+The orchestrator integrates with Claude Code via MCP servers for enhanced tool access.
+
+### Configuration
+
+The MCP configuration is in `.claude/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "temporal": {
+      "command": "npx",
+      "args": ["-y", "@anthropic/mcp-server-temporal"],
+      "env": {
+        "TEMPORAL_ADDRESS": "localhost:7233",
+        "TEMPORAL_NAMESPACE": "default"
+      }
+    },
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@anthropic/mcp-server-fs"],
+      "env": {
+        "MCP_FS_ROOT": "."
+      }
+    },
+    "git": {
+      "command": "npx",
+      "args": ["-y", "@anthropic/mcp-server-git"],
+      "env": {
+        "GIT_REPO_PATH": "."
+      }
+    },
+    "memory": {
+      "command": "npx",
+      "args": ["-y", "@anthropic/mcp-server-memory"]
+    }
+  }
+}
+```
+
+### Available MCP Servers
+
+| Server | Description | Usage |
+|--------|-------------|-------|
+| `temporal` | Temporal workflow operations | Query, signal, manage workflows |
+| `temporal-cloud` | Temporal Cloud management | Namespaces, users, cloud resources |
+| `filesystem` | File system operations | Read, write, manage project files |
+| `git` | Git operations | Commits, branches, diffs, history |
+| `memory` | Persistent memory | Store context across sessions |
+| `postgres` | PostgreSQL operations | Query and manage database |
+
+### Using with Claude Code
+
+1. Ensure the MCP configuration is in your project's `.claude/mcp.json`
+2. Start the required services (Temporal, PostgreSQL, etc.)
+3. Claude Code will automatically connect to configured MCP servers
+4. Use Claude to interact with workflows:
+
+```
+"Start a new orchestration workflow for building a REST API"
+"Check the status of workflow xyz-123"
+"List all running workflows"
+"Query the agent memory for design decisions"
+```
+
+### Temporal MCP Features
+
+The Temporal MCP server provides:
+
+- **Workflow Management**: Start, query, signal, cancel workflows
+- **Activity Monitoring**: View activity status and history
+- **Namespace Operations**: Manage namespaces and configuration
+- **Search**: Find workflows by status, type, or custom attributes
+
+For more information, see the [Temporal MCP documentation](https://temporal.mcp.kapa.ai).
 
 ## Development
 

@@ -1,0 +1,52 @@
+{
+  "mcpServers": {
+    "temporal": {
+      "command": "npx",
+      "args": ["-y", "@anthropic/mcp-server-temporal"],
+      "env": {
+        "TEMPORAL_ADDRESS": "${TEMPORAL_ADDRESS:-localhost:7233}",
+        "TEMPORAL_NAMESPACE": "${TEMPORAL_NAMESPACE:-default}"
+      },
+      "description": "Temporal workflow operations - query, signal, and manage workflows"
+    },
+    "temporal-cloud": {
+      "command": "npx",
+      "args": ["-y", "temcp"],
+      "env": {
+        "TEMPORAL_CLOUD_API_KEY": "${TEMPORAL_CLOUD_API_KEY}"
+      },
+      "disabled": true,
+      "description": "Temporal Cloud operations - manage namespaces, users, and cloud resources"
+    },
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@anthropic/mcp-server-fs"],
+      "env": {
+        "MCP_FS_ROOT": "${WORKING_DIR:-.}"
+      },
+      "description": "File system operations - read, write, and manage project files"
+    },
+    "git": {
+      "command": "npx",
+      "args": ["-y", "@anthropic/mcp-server-git"],
+      "env": {
+        "GIT_REPO_PATH": "${WORKING_DIR:-.}"
+      },
+      "description": "Git operations - commits, branches, diffs, and history"
+    },
+    "memory": {
+      "command": "npx",
+      "args": ["-y", "@anthropic/mcp-server-memory"],
+      "description": "Persistent memory for storing context across sessions"
+    },
+    "postgres": {
+      "command": "npx",
+      "args": ["-y", "@anthropic/mcp-server-postgres"],
+      "env": {
+        "POSTGRES_CONNECTION_STRING": "postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@${POSTGRES_HOST:-localhost}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-claude_orchestrator}"
+      },
+      "disabled": true,
+      "description": "PostgreSQL database operations - query and manage database"
+    }
+  }
+}
