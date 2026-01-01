@@ -5,76 +5,166 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime"
 	"syscall"
 	"time"
 
+	"github.com/anthropics/claude-orchestrator/internal/config"
 	"github.com/anthropics/claude-orchestrator/internal/domain"
+	"github.com/anthropics/claude-orchestrator/internal/logging"
+	"github.com/anthropics/claude-orchestrator/internal/metrics"
 	"github.com/anthropics/claude-orchestrator/internal/workflow"
 	"github.com/google/uuid"
 	"go.temporal.io/api/workflowservice/v1"
 	"go.temporal.io/sdk/client"
 )
 
-var temporalClient client.Client
+var (
+	version        = "dev"
+	buildTime      = "unknown"
+	temporalClient client.Client
+	appMetrics     *metrics.Metrics
+	log            *logging.Logger
+)
 
 func main() {
-	// Get configuration from environment
+	// Load configuration
+	configPath := os.Getenv("CONFIG_PATH")
+	cfg, err := config.LoadConfig(configPath)
+	if err != nil && configPath != "" {
+		cfg = config.DefaultConfig()
+	}
+
+	// Initialize logger
+	logCfg := logging.Config{
+		Level:         logging.Level(cfg.Logging.Level),
+		Format:        logging.Format(cfg.Logging.Format),
+		Output:        cfg.Logging.Output,
+		AddCaller:     cfg.Logging.AddCaller,
+		AddStacktrace: cfg.Logging.AddStacktrace,
+		Development:   cfg.Logging.Development,
+	}
+	if cfg.Logging.Sampling != nil {
+		logCfg.SamplingConfig = &logging.SamplingConfig{
+			Enabled:    cfg.Logging.Sampling.Enabled,
+			Initial:    cfg.Logging.Sampling.Initial,
+			Thereafter: cfg.Logging.Sampling.Thereafter,
+		}
+	}
+
+	logger, err := logging.NewLogger(logCfg)
+	if err != nil {
+		panic("failed to initialize logger: " + err.Error())
+	}
+	defer logger.Sync()
+	logging.SetGlobal(logger)
+
+	log = logger.Named("api")
+
+	// Initialize metrics
+	metricsCfg := metrics.Config{
+		Enabled:              cfg.Metrics.Enabled,
+		Address:              cfg.Metrics.Address,
+		Path:                 cfg.Metrics.Path,
+		Namespace:            cfg.Metrics.Namespace,
+		EnableGoMetrics:      cfg.Metrics.EnableGoMetrics,
+		EnableProcessMetrics: cfg.Metrics.EnableProcessMetrics,
+		Buckets:              cfg.Metrics.Buckets,
+	}
+	appMetrics = metrics.New(metricsCfg)
+	metrics.SetGlobal(appMetrics)
+
+	// Set application info
+	appMetrics.SetInfo(version, runtime.Version(), buildTime)
+
+	// Get configuration from environment (for backwards compatibility)
 	port := getEnv("PORT", "8080")
-	temporalAddr := getEnv("TEMPORAL_ADDRESS", "localhost:7233")
-	temporalNS := getEnv("TEMPORAL_NAMESPACE", "default")
+	temporalAddr := getEnv("TEMPORAL_ADDRESS", cfg.Temporal.Address)
+	temporalNS := getEnv("TEMPORAL_NAMESPACE", cfg.Temporal.Namespace)
 
 	// Create Temporal client
-	var err error
 	temporalClient, err = client.Dial(client.Options{
 		HostPort:  temporalAddr,
 		Namespace: temporalNS,
 	})
 	if err != nil {
-		log.Fatalf("Failed to create Temporal client: %v", err)
+		log.Fatal("Failed to create Temporal client", logging.Error(err))
 	}
 	defer temporalClient.Close()
 
 	// Set up HTTP routes
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", healthHandler)
+	mux.HandleFunc("/ready", readyHandler)
 	mux.HandleFunc("/api/v1/workflows", workflowsHandler)
 	mux.HandleFunc("/api/v1/workflows/", workflowHandler)
+
+	// Add metrics endpoint if not using separate metrics server
+	if !cfg.Metrics.Enabled {
+		mux.Handle("/metrics", appMetrics.Handler())
+	}
+
+	// Apply middleware
+	var handler http.Handler = mux
+	handler = appMetrics.HTTPMiddleware(handler) // Metrics middleware
+	handler = loggingMiddleware(handler)         // Logging middleware
+	handler = corsMiddleware(handler)            // CORS middleware
 
 	// Create server
 	server := &http.Server{
 		Addr:         ":" + port,
-		Handler:      corsMiddleware(loggingMiddleware(mux)),
+		Handler:      handler,
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 30 * time.Second,
 	}
 
-	// Start server
+	// Start metrics server in background if enabled (separate port)
+	if cfg.Metrics.Enabled {
+		go func() {
+			log.Info("Starting metrics server",
+				logging.String("address", cfg.Metrics.Address),
+				logging.String("path", cfg.Metrics.Path),
+			)
+			if err := appMetrics.StartServer(); err != nil {
+				log.Error("Metrics server failed", logging.Error(err))
+			}
+		}()
+	}
+
+	// Start API server
+	startTime := time.Now()
 	go func() {
-		log.Printf("API server starting on port %s", port)
+		log.Info("API server starting",
+			logging.String("port", port),
+			logging.String("temporal_address", temporalAddr),
+			logging.String("version", version),
+		)
 		if err := server.ListenAndServe(); err != http.ErrServerClosed {
-			log.Fatalf("Server failed: %v", err)
+			log.Fatal("Server failed", logging.Error(err))
 		}
 	}()
 
 	// Wait for shutdown
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	<-sigCh
+	sig := <-sigCh
 
-	log.Println("Shutting down server...")
+	log.Info("Received shutdown signal",
+		logging.String("signal", sig.String()),
+		logging.Duration("uptime", time.Since(startTime)),
+	)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	if err := server.Shutdown(ctx); err != nil {
-		log.Printf("Server shutdown error: %v", err)
+		log.Error("Server shutdown error", logging.Error(err))
 	}
 
-	log.Println("Server stopped")
+	log.Info("Server stopped")
 }
 
 // CreateWorkflowRequest represents a request to create a workflow.
@@ -106,7 +196,25 @@ type ErrorResponse struct {
 }
 
 func healthHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "healthy"})
+}
+
+func readyHandler(w http.ResponseWriter, r *http.Request) {
+	// Check Temporal connection
+	_, err := temporalClient.CheckHealth(r.Context(), nil)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		json.NewEncoder(w).Encode(map[string]string{
+			"status": "not_ready",
+			"error":  "temporal connection failed",
+		})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ready"})
 }
 
 func workflowsHandler(w http.ResponseWriter, r *http.Request) {
@@ -199,9 +307,22 @@ func createWorkflow(w http.ResponseWriter, r *http.Request) {
 
 	we, err := temporalClient.ExecuteWorkflow(context.Background(), options, workflow.OrchestratorWorkflow, input)
 	if err != nil {
+		log.Error("Failed to start workflow",
+			logging.Error(err),
+			logging.WorkflowID(workflowID),
+		)
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to start workflow: %v", err))
 		return
 	}
+
+	// Record workflow started metric
+	appMetrics.RecordWorkflowStart("orchestrator")
+
+	log.Info("Workflow started",
+		logging.WorkflowID(we.GetID()),
+		logging.RunID(we.GetRunID()),
+		logging.String("title", req.Title),
+	)
 
 	response := WorkflowResponse{
 		WorkflowID: we.GetID(),
@@ -230,6 +351,7 @@ func listWorkflows(w http.ResponseWriter, r *http.Request) {
 		PageSize:  50,
 	})
 	if err != nil {
+		log.Error("Failed to list workflows", logging.Error(err))
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to list workflows: %v", err))
 		return
 	}
@@ -294,13 +416,19 @@ func getWorkflow(w http.ResponseWriter, r *http.Request, workflowID string) {
 func cancelWorkflow(w http.ResponseWriter, r *http.Request, workflowID string) {
 	err := temporalClient.CancelWorkflow(context.Background(), workflowID, "")
 	if err != nil {
+		log.Error("Failed to cancel workflow",
+			logging.Error(err),
+			logging.WorkflowID(workflowID),
+		)
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to cancel workflow: %v", err))
 		return
 	}
 
+	log.Info("Workflow cancelled", logging.WorkflowID(workflowID))
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
-		"message": "Workflow cancelled",
+		"message":     "Workflow cancelled",
 		"workflow_id": workflowID,
 	})
 }
@@ -318,7 +446,11 @@ func loggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		next.ServeHTTP(w, r)
-		log.Printf("%s %s %s", r.Method, r.URL.Path, time.Since(start))
+		log.Debug("HTTP request",
+			logging.Method(r.Method),
+			logging.URL(r.URL.Path),
+			logging.Latency(time.Since(start)),
+		)
 	})
 }
 

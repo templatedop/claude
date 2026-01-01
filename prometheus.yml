@@ -1,0 +1,60 @@
+# Prometheus configuration for Claude Orchestrator
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    monitor: 'claude-orchestrator'
+
+# Alertmanager configuration (optional)
+# alerting:
+#   alertmanagers:
+#     - static_configs:
+#         - targets:
+#           - alertmanager:9093
+
+# Rule files (optional)
+# rule_files:
+#   - "first_rules.yml"
+#   - "second_rules.yml"
+
+scrape_configs:
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # Claude Orchestrator Worker
+  - job_name: 'worker'
+    static_configs:
+      - targets: ['worker:9090']
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: 'worker'
+
+  # Claude Orchestrator API
+  - job_name: 'api'
+    static_configs:
+      - targets: ['api:9090']
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: 'api'
+
+  # Temporal server metrics (if exposed)
+  # - job_name: 'temporal'
+  #   static_configs:
+  #     - targets: ['temporal:9090']
+
+  # PostgreSQL exporter (optional, requires postgres-exporter)
+  # - job_name: 'postgres'
+  #   static_configs:
+  #     - targets: ['postgres-exporter:9187']
+
+  # MinIO metrics
+  # - job_name: 'minio'
+  #   metrics_path: /minio/v2/metrics/cluster
+  #   scheme: http
+  #   static_configs:
+  #     - targets: ['minio:9000']

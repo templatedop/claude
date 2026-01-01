@@ -106,6 +106,49 @@ services:
       - full
 
   # =============================================================================
+  # Observability Services
+  # =============================================================================
+
+  # Prometheus for metrics collection
+  prometheus:
+    image: prom/prometheus:v2.48.0
+    ports:
+      - "9091:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.enable-lifecycle'
+      - '--web.enable-admin-api'
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    profiles:
+      - monitoring
+
+  # Grafana for visualization
+  grafana:
+    image: grafana/grafana:10.2.0
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    profiles:
+      - monitoring
+
+  # =============================================================================
   # Application Services
   # =============================================================================
 
@@ -151,6 +194,15 @@ services:
       - FEATURE_FRAMEWORK_LEARNING=true
       - FEATURE_CODE_REVIEW=true
       - FEATURE_PARALLEL_EXECUTION=true
+      # Logging
+      - LOG_LEVEL=info
+      - LOG_FORMAT=json
+      # Metrics
+      - METRICS_ENABLED=true
+      - METRICS_ADDRESS=:9090
+      - METRICS_PATH=/metrics
+    ports:
+      - "9092:9090"  # Worker metrics
     volumes:
       - ./workspace:/app/workspace
       - ./storage:/app/storage
@@ -179,11 +231,19 @@ services:
       target: api
     ports:
       - "8080:8080"
+      - "9093:9090"  # API metrics
     environment:
       - PORT=8080
       - TEMPORAL_ADDRESS=temporal:7233
       - TEMPORAL_NAMESPACE=default
       - TASK_QUEUE=claude-orchestrator
+      # Logging
+      - LOG_LEVEL=info
+      - LOG_FORMAT=json
+      # Metrics
+      - METRICS_ENABLED=true
+      - METRICS_ADDRESS=:9090
+      - METRICS_PATH=/metrics
     depends_on:
       temporal:
         condition: service_healthy
@@ -241,6 +301,8 @@ volumes:
   postgres_data:
   minio_data:
   redis_data:
+  prometheus_data:
+  grafana_data:
 
 networks:
   default:

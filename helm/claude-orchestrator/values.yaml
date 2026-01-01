@@ -267,14 +267,59 @@ minio:
       memory: 256Mi
 
 # =============================================================================
-# Monitoring
+# Logging
+# =============================================================================
+logging:
+  level: "info"  # debug, info, warn, error
+  format: "json"  # json, console, text
+  development: false
+  addCaller: true
+  addStacktrace: false
+  sampling:
+    enabled: false
+    initial: 100
+    thereafter: 100
+
+# =============================================================================
+# Metrics & Monitoring
 # =============================================================================
 metrics:
-  enabled: false
+  enabled: true
+  port: 9090
+  path: "/metrics"
+  namespace: "claude_orchestrator"
+  enableGoMetrics: true
+  enableProcessMetrics: true
+
+  # Prometheus ServiceMonitor (requires Prometheus Operator)
   serviceMonitor:
     enabled: false
     interval: 30s
+    scrapeTimeout: 10s
     labels: {}
+    # relabelings: []
+    # metricRelabelings: []
+
+  # Prometheus PodMonitor (alternative to ServiceMonitor)
+  podMonitor:
+    enabled: false
+    interval: 30s
+    labels: {}
+
+  # Prometheus Rules for alerting
+  prometheusRules:
+    enabled: false
+    labels: {}
+    rules: []
+    # Example rules:
+    # - alert: HighWorkflowFailureRate
+    #   expr: rate(claude_orchestrator_workflows_failed_total[5m]) > 0.1
+    #   for: 5m
+    #   labels:
+    #     severity: warning
+    #   annotations:
+    #     summary: High workflow failure rate
+    #     description: "Workflow failure rate is above 10% for the last 5 minutes"
 
 # =============================================================================
 # Network Policies

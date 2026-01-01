@@ -1015,6 +1015,133 @@ The Temporal MCP server provides:
 
 For more information, see the [Temporal MCP documentation](https://temporal.mcp.kapa.ai).
 
+## Observability
+
+### Logging
+
+The orchestrator uses structured logging via [zap](https://github.com/uber-go/zap) with configurable levels and formats.
+
+#### Configuration
+
+```yaml
+logging:
+  level: "info"         # debug, info, warn, error
+  format: "json"        # json, console, text
+  output: "stdout"      # stdout, stderr, or file path
+  add_caller: true      # Include caller information
+  add_stacktrace: false # Include stack trace for errors
+  development: false    # Development mode (more verbose)
+  sampling:
+    enabled: false      # Enable log sampling for high-volume
+    initial: 100        # Log first N entries per second
+    thereafter: 100     # Then log every Mth entry
+```
+
+#### Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `LOG_LEVEL` | Log level (debug, info, warn, error) | `info` |
+| `LOG_FORMAT` | Output format (json, console, text) | `json` |
+| `LOG_OUTPUT` | Output destination | `stdout` |
+| `LOG_DEVELOPMENT` | Enable development mode | `false` |
+
+#### Log Fields
+
+Logs include contextual fields:
+
+```json
+{
+  "time": "2024-01-15T10:30:00Z",
+  "level": "info",
+  "caller": "worker/main.go:123",
+  "msg": "Workflow started",
+  "workflow_id": "orchestrator-abc123",
+  "run_id": "xyz789",
+  "agent_type": "planner"
+}
+```
+
+### Metrics
+
+The orchestrator exposes Prometheus metrics for monitoring workflows, activities, and system health.
+
+#### Configuration
+
+```yaml
+metrics:
+  enabled: true
+  address: ":9090"
+  path: "/metrics"
+  namespace: "claude_orchestrator"
+  enable_go_metrics: true
+  enable_process_metrics: true
+```
+
+#### Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `METRICS_ENABLED` | Enable metrics endpoint | `true` |
+| `METRICS_ADDRESS` | Metrics server address | `:9090` |
+| `METRICS_PATH` | Metrics endpoint path | `/metrics` |
+
+#### Available Metrics
+
+**Workflow Metrics:**
+- `claude_orchestrator_workflows_started_total` - Total workflows started
+- `claude_orchestrator_workflows_completed_total` - Total workflows completed
+- `claude_orchestrator_workflows_failed_total` - Total workflows failed
+- `claude_orchestrator_workflow_duration_seconds` - Workflow duration histogram
+- `claude_orchestrator_workflows_active` - Currently active workflows
+
+**Activity Metrics:**
+- `claude_orchestrator_activities_started_total` - Total activities started
+- `claude_orchestrator_activities_completed_total` - Total activities completed
+- `claude_orchestrator_activities_failed_total` - Total activities failed
+- `claude_orchestrator_activity_duration_seconds` - Activity duration histogram
+
+**Agent Metrics:**
+- `claude_orchestrator_agent_tasks_assigned_total` - Tasks assigned to agents
+- `claude_orchestrator_agent_tasks_completed_total` - Tasks completed by agents
+- `claude_orchestrator_agent_task_duration_seconds` - Agent task duration
+
+**Claude API Metrics:**
+- `claude_orchestrator_claude_api_requests_total` - Total API requests
+- `claude_orchestrator_claude_api_errors_total` - Total API errors
+- `claude_orchestrator_claude_api_latency_seconds` - API latency histogram
+- `claude_orchestrator_claude_api_tokens_input_total` - Input tokens used
+- `claude_orchestrator_claude_api_tokens_output_total` - Output tokens used
+
+**HTTP API Metrics:**
+- `claude_orchestrator_http_requests_total` - Total HTTP requests
+- `claude_orchestrator_http_request_duration_seconds` - Request duration
+
+#### Prometheus Integration
+
+```yaml
+# prometheus.yml
+scrape_configs:
+  - job_name: 'worker'
+    static_configs:
+      - targets: ['worker:9090']
+  - job_name: 'api'
+    static_configs:
+      - targets: ['api:9090']
+```
+
+#### Grafana Dashboard
+
+Start the monitoring stack:
+
+```bash
+docker-compose --profile monitoring up -d
+```
+
+Access:
+- Prometheus: http://localhost:9091
+- Grafana: http://localhost:3000 (admin/admin)
+
 ## Development
 
 ### Running Tests

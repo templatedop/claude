@@ -20,6 +20,27 @@ data:
       "memory": {
         "type": {{ .Values.config.memory.type | quote }}
       },
+      "logging": {
+        "level": {{ .Values.logging.level | quote }},
+        "format": {{ .Values.logging.format | quote }},
+        "output": "stdout",
+        "add_caller": {{ .Values.logging.addCaller }},
+        "add_stacktrace": {{ .Values.logging.addStacktrace }},
+        "development": {{ .Values.logging.development }},
+        "sampling": {
+          "enabled": {{ .Values.logging.sampling.enabled }},
+          "initial": {{ .Values.logging.sampling.initial }},
+          "thereafter": {{ .Values.logging.sampling.thereafter }}
+        }
+      },
+      "metrics": {
+        "enabled": {{ .Values.metrics.enabled }},
+        "address": ":{{ .Values.metrics.port }}",
+        "path": {{ .Values.metrics.path | quote }},
+        "namespace": {{ .Values.metrics.namespace | quote }},
+        "enable_go_metrics": {{ .Values.metrics.enableGoMetrics }},
+        "enable_process_metrics": {{ .Values.metrics.enableProcessMetrics }}
+      },
       "storage": {
         "enabled": {{ .Values.config.features.storage }},
         "type": {{ .Values.config.storage.type | quote }},

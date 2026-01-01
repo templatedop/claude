@@ -3,14 +3,17 @@ package main
 
 import (
 	"context"
-	"log"
 	"os"
 	"os/signal"
+	"runtime"
 	"syscall"
+	"time"
 
 	"github.com/anthropics/claude-orchestrator/internal/activity"
 	"github.com/anthropics/claude-orchestrator/internal/config"
+	"github.com/anthropics/claude-orchestrator/internal/logging"
 	"github.com/anthropics/claude-orchestrator/internal/memory"
+	"github.com/anthropics/claude-orchestrator/internal/metrics"
 	"github.com/anthropics/claude-orchestrator/internal/rag"
 	"github.com/anthropics/claude-orchestrator/internal/storage"
 	"github.com/anthropics/claude-orchestrator/internal/workflow"
@@ -18,13 +21,73 @@ import (
 	"go.temporal.io/sdk/worker"
 )
 
+var (
+	version   = "dev"
+	buildTime = "unknown"
+)
+
 func main() {
 	// Load configuration
 	configPath := os.Getenv("CONFIG_PATH")
 	cfg, err := config.LoadConfig(configPath)
 	if err != nil && configPath != "" {
-		log.Printf("Warning: Failed to load config from %s: %v", configPath, err)
+		// Use default config and continue
 		cfg = config.DefaultConfig()
+	}
+
+	// Initialize logger
+	logCfg := logging.Config{
+		Level:         logging.Level(cfg.Logging.Level),
+		Format:        logging.Format(cfg.Logging.Format),
+		Output:        cfg.Logging.Output,
+		AddCaller:     cfg.Logging.AddCaller,
+		AddStacktrace: cfg.Logging.AddStacktrace,
+		Development:   cfg.Logging.Development,
+	}
+	if cfg.Logging.Sampling != nil {
+		logCfg.SamplingConfig = &logging.SamplingConfig{
+			Enabled:    cfg.Logging.Sampling.Enabled,
+			Initial:    cfg.Logging.Sampling.Initial,
+			Thereafter: cfg.Logging.Sampling.Thereafter,
+		}
+	}
+
+	logger, err := logging.NewLogger(logCfg)
+	if err != nil {
+		panic("failed to initialize logger: " + err.Error())
+	}
+	defer logger.Sync()
+	logging.SetGlobal(logger)
+
+	log := logger.Named("worker")
+
+	// Initialize metrics
+	metricsCfg := metrics.Config{
+		Enabled:              cfg.Metrics.Enabled,
+		Address:              cfg.Metrics.Address,
+		Path:                 cfg.Metrics.Path,
+		Namespace:            cfg.Metrics.Namespace,
+		EnableGoMetrics:      cfg.Metrics.EnableGoMetrics,
+		EnableProcessMetrics: cfg.Metrics.EnableProcessMetrics,
+		Buckets:              cfg.Metrics.Buckets,
+	}
+	m := metrics.New(metricsCfg)
+	metrics.SetGlobal(m)
+
+	// Set application info
+	m.SetInfo(version, runtime.Version(), buildTime)
+
+	// Start metrics server in background if enabled
+	if cfg.Metrics.Enabled {
+		go func() {
+			log.Info("Starting metrics server",
+				logging.String("address", cfg.Metrics.Address),
+				logging.String("path", cfg.Metrics.Path),
+			)
+			if err := m.StartServer(); err != nil {
+				log.Error("Metrics server failed", logging.Error(err))
+			}
+		}()
 	}
 
 	// Apply environment overrides for backwards compatibility
@@ -34,18 +97,21 @@ func main() {
 	workingDir := getEnv("WORKING_DIR", ".")
 
 	if cfg.Claude.APIKey == "" {
-		log.Println("Warning: ANTHROPIC_API_KEY not set. Claude activities will fail.")
+		log.Warn("ANTHROPIC_API_KEY not set. Claude activities will fail.")
 	}
 
 	// Log feature status
-	log.Println("Feature Status:")
-	log.Printf("  - Document Analysis: %v", cfg.Features.DocumentAnalysis.Enabled)
-	log.Printf("  - Requirements Tracking: %v", cfg.Features.RequirementsTracking.Enabled)
-	log.Printf("  - Framework Learning: %v", cfg.Features.FrameworkLearning.Enabled)
-	log.Printf("  - Code Review: %v", cfg.Features.CodeReview)
-	log.Printf("  - Parallel Execution: %v", cfg.Features.ParallelExecution)
-	log.Printf("  - Cloud Storage: %v (%s)", cfg.Storage.Enabled, cfg.Storage.Type)
-	log.Printf("  - RAG/Embeddings: %v (%s)", cfg.RAG.Enabled, cfg.RAG.Embedding.Provider)
+	log.Info("Feature Status",
+		logging.Bool("document_analysis", cfg.Features.DocumentAnalysis.Enabled),
+		logging.Bool("requirements_tracking", cfg.Features.RequirementsTracking.Enabled),
+		logging.Bool("framework_learning", cfg.Features.FrameworkLearning.Enabled),
+		logging.Bool("code_review", cfg.Features.CodeReview),
+		logging.Bool("parallel_execution", cfg.Features.ParallelExecution),
+		logging.Bool("cloud_storage", cfg.Storage.Enabled),
+		logging.String("storage_type", cfg.Storage.Type),
+		logging.Bool("rag", cfg.RAG.Enabled),
+		logging.String("embedding_provider", cfg.RAG.Embedding.Provider),
+	)
 
 	// Create Temporal client
 	c, err := client.Dial(client.Options{
@@ -53,7 +119,7 @@ func main() {
 		Namespace: cfg.Temporal.Namespace,
 	})
 	if err != nil {
-		log.Fatalf("Failed to create Temporal client: %v", err)
+		log.Fatal("Failed to create Temporal client", logging.Error(err))
 	}
 	defer c.Close()
 
@@ -71,7 +137,9 @@ func main() {
 		}
 		store, err := memory.NewPostgresStore(pgCfg)
 		if err != nil {
-			log.Printf("Failed to create PostgreSQL store, falling back to in-memory: %v", err)
+			log.Warn("Failed to create PostgreSQL store, falling back to in-memory",
+				logging.Error(err),
+			)
 			memoryStore = memory.NewInMemoryStore()
 		} else {
 			memoryStore = store
@@ -86,7 +154,7 @@ func main() {
 	if cfg.Claude.APIKey != "" {
 		claudeActivities, err = activity.NewClaudeActivities(cfg.Claude.APIKey)
 		if err != nil {
-			log.Fatalf("Failed to create Claude activities: %v", err)
+			log.Fatal("Failed to create Claude activities", logging.Error(err))
 		}
 	}
 
@@ -102,7 +170,7 @@ func main() {
 	if cfg.Features.DocumentAnalysis.Enabled && cfg.Claude.APIKey != "" {
 		documentActivities, err = activity.NewDocumentActivities(cfg.Claude.APIKey)
 		if err != nil {
-			log.Printf("Warning: Failed to create document activities: %v", err)
+			log.Warn("Failed to create document activities", logging.Error(err))
 		}
 	}
 
@@ -113,7 +181,7 @@ func main() {
 	if cfg.Features.FrameworkLearning.Enabled && cfg.Claude.APIKey != "" {
 		frameworkActivities, err = activity.NewFrameworkActivities(cfg.Claude.APIKey, memoryStore)
 		if err != nil {
-			log.Printf("Warning: Failed to create framework activities: %v", err)
+			log.Warn("Failed to create framework activities", logging.Error(err))
 		}
 	}
 
@@ -132,7 +200,7 @@ func main() {
 			}
 			s3Store, err := storage.NewS3Store(s3Cfg)
 			if err != nil {
-				log.Printf("Warning: Failed to create S3 store, falling back to local: %v", err)
+				log.Warn("Failed to create S3 store, falling back to local", logging.Error(err))
 				localCfg := storage.LocalConfig{
 					BasePath:    cfg.Storage.Local.BasePath,
 					MaxFileSize: cfg.Storage.Local.MaxFileSize,
@@ -149,7 +217,7 @@ func main() {
 			}
 			localStore, err := storage.NewLocalStore(localCfg)
 			if err != nil {
-				log.Printf("Warning: Failed to create local storage: %v", err)
+				log.Warn("Failed to create local storage", logging.Error(err))
 			} else {
 				fileStore = localStore
 			}
@@ -178,7 +246,7 @@ func main() {
 		ragActivities = activity.NewRAGActivities(memoryStore, embeddingConfig, chunkOpts)
 	}
 
-	// Create worker
+	// Create worker with interceptors for metrics
 	w := worker.New(c, cfg.Temporal.TaskQueue, worker.Options{
 		MaxConcurrentActivityExecutionSize:     10,
 		MaxConcurrentWorkflowTaskExecutionSize: 10,
@@ -229,7 +297,7 @@ func main() {
 	if documentActivities != nil {
 		w.RegisterActivity(documentActivities.ReadDocument)
 		w.RegisterActivity(documentActivities.AnalyzeRequirements)
-		log.Println("Registered document analysis activities")
+		log.Info("Registered document analysis activities")
 	}
 
 	if requirementsActivities != nil {
@@ -239,7 +307,7 @@ func main() {
 		w.RegisterActivity(requirementsActivities.UpdateRequirementStatus)
 		w.RegisterActivity(requirementsActivities.LinkImplementation)
 		w.RegisterActivity(requirementsActivities.GetRequirementsSummary)
-		log.Println("Registered requirements tracking activities")
+		log.Info("Registered requirements tracking activities")
 	}
 
 	if frameworkActivities != nil {
@@ -247,7 +315,7 @@ func main() {
 		w.RegisterActivity(frameworkActivities.GetFrameworkKnowledge)
 		w.RegisterActivity(frameworkActivities.GenerateFrameworkPrompt)
 		w.RegisterActivity(frameworkActivities.ListFrameworks)
-		log.Println("Registered framework learning activities")
+		log.Info("Registered framework learning activities")
 	}
 
 	// Register storage activities
@@ -263,7 +331,7 @@ func main() {
 		w.RegisterActivity(storageActivities.CreateBucket)
 		w.RegisterActivity(storageActivities.ListBuckets)
 		w.RegisterActivity(storageActivities.FileExists)
-		log.Printf("Registered cloud storage activities (%s)", cfg.Storage.Type)
+		log.Info("Registered cloud storage activities", logging.String("type", cfg.Storage.Type))
 	}
 
 	// Register RAG activities
@@ -273,22 +341,27 @@ func main() {
 		w.RegisterActivity(ragActivities.DeleteDocument)
 		w.RegisterActivity(ragActivities.GenerateRAGPrompt)
 		w.RegisterActivity(ragActivities.ListDocuments)
-		log.Printf("Registered RAG activities (%s embeddings)", cfg.RAG.Embedding.Provider)
+		log.Info("Registered RAG activities", logging.String("provider", cfg.RAG.Embedding.Provider))
 	}
 
 	// Start worker in background
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	startTime := time.Now()
+
 	go func() {
 		if err := w.Run(worker.InterruptCh()); err != nil {
-			log.Fatalf("Worker failed: %v", err)
+			log.Fatal("Worker failed", logging.Error(err))
 		}
 	}()
 
-	log.Printf("Worker started on task queue: %s", cfg.Temporal.TaskQueue)
-	log.Printf("Temporal address: %s", cfg.Temporal.Address)
-	log.Printf("Working directory: %s", workingDir)
+	log.Info("Worker started",
+		logging.String("task_queue", cfg.Temporal.TaskQueue),
+		logging.String("temporal_address", cfg.Temporal.Address),
+		logging.String("working_dir", workingDir),
+		logging.String("version", version),
+	)
 
 	// Wait for shutdown signal
 	sigCh := make(chan os.Signal, 1)
@@ -296,12 +369,15 @@ func main() {
 
 	select {
 	case sig := <-sigCh:
-		log.Printf("Received signal %v, shutting down...", sig)
+		log.Info("Received shutdown signal",
+			logging.String("signal", sig.String()),
+			logging.Duration("uptime", time.Since(startTime)),
+		)
 		cancel()
 	case <-ctx.Done():
 	}
 
-	log.Println("Worker stopped")
+	log.Info("Worker stopped")
 }
 
 func getEnv(key, defaultValue string) string {

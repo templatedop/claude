@@ -18,6 +18,10 @@ type Config struct {
 	Storage       StorageConfig       `json:"storage"`
 	RAG           RAGConfig           `json:"rag"`
 
+	// Observability
+	Logging       LoggingConfig       `json:"logging"`
+	Metrics       MetricsConfig       `json:"metrics"`
+
 	// Feature toggles
 	Features      FeatureConfig       `json:"features"`
 
@@ -26,6 +30,36 @@ type Config struct {
 
 	// Workflow settings
 	Workflow      WorkflowConfig      `json:"workflow"`
+}
+
+// LoggingConfig contains logging configuration.
+type LoggingConfig struct {
+	Level         string `json:"level" env:"LOG_LEVEL"`           // debug, info, warn, error
+	Format        string `json:"format" env:"LOG_FORMAT"`         // json, console, text
+	Output        string `json:"output" env:"LOG_OUTPUT"`         // stdout, stderr, file path
+	AddCaller     bool   `json:"add_caller"`
+	AddStacktrace bool   `json:"add_stacktrace"`
+	Development   bool   `json:"development" env:"LOG_DEVELOPMENT"`
+	// Sampling configuration for high-volume logs
+	Sampling      *LogSamplingConfig `json:"sampling,omitempty"`
+}
+
+// LogSamplingConfig configures log sampling.
+type LogSamplingConfig struct {
+	Enabled    bool `json:"enabled"`
+	Initial    int  `json:"initial"`    // Log first N entries per second
+	Thereafter int  `json:"thereafter"` // Then log every Mth entry
+}
+
+// MetricsConfig contains metrics configuration.
+type MetricsConfig struct {
+	Enabled              bool      `json:"enabled" env:"METRICS_ENABLED"`
+	Address              string    `json:"address" env:"METRICS_ADDRESS"` // e.g., ":9090"
+	Path                 string    `json:"path" env:"METRICS_PATH"`       // e.g., "/metrics"
+	Namespace            string    `json:"namespace"`                     // Prometheus namespace
+	EnableGoMetrics      bool      `json:"enable_go_metrics"`
+	EnableProcessMetrics bool      `json:"enable_process_metrics"`
+	Buckets              []float64 `json:"buckets,omitempty"` // Custom histogram buckets
 }
 
 // TemporalConfig contains Temporal server configuration.
@@ -205,6 +239,27 @@ func DefaultConfig() *Config {
 				User:     "postgres",
 				SSLMode:  "disable",
 			},
+		},
+		Logging: LoggingConfig{
+			Level:         "info",
+			Format:        "json",
+			Output:        "stdout",
+			AddCaller:     true,
+			AddStacktrace: false,
+			Development:   false,
+			Sampling: &LogSamplingConfig{
+				Enabled:    false,
+				Initial:    100,
+				Thereafter: 100,
+			},
+		},
+		Metrics: MetricsConfig{
+			Enabled:              true,
+			Address:              ":9090",
+			Path:                 "/metrics",
+			Namespace:            "claude_orchestrator",
+			EnableGoMetrics:      true,
+			EnableProcessMetrics: true,
 		},
 		Storage: StorageConfig{
 			Enabled: true,
@@ -444,6 +499,31 @@ func applyEnvironmentOverrides(config *Config) {
 	}
 	if v := os.Getenv("EMBEDDING_ENDPOINT"); v != "" {
 		config.RAG.Embedding.Endpoint = v
+	}
+
+	// Logging
+	if v := os.Getenv("LOG_LEVEL"); v != "" {
+		config.Logging.Level = v
+	}
+	if v := os.Getenv("LOG_FORMAT"); v != "" {
+		config.Logging.Format = v
+	}
+	if v := os.Getenv("LOG_OUTPUT"); v != "" {
+		config.Logging.Output = v
+	}
+	if v := os.Getenv("LOG_DEVELOPMENT"); v != "" {
+		config.Logging.Development = parseBool(v)
+	}
+
+	// Metrics
+	if v := os.Getenv("METRICS_ENABLED"); v != "" {
+		config.Metrics.Enabled = parseBool(v)
+	}
+	if v := os.Getenv("METRICS_ADDRESS"); v != "" {
+		config.Metrics.Address = v
+	}
+	if v := os.Getenv("METRICS_PATH"); v != "" {
+		config.Metrics.Path = v
 	}
 }
 
