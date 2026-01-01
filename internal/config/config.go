@@ -15,6 +15,8 @@ type Config struct {
 	Temporal      TemporalConfig      `json:"temporal"`
 	Claude        ClaudeConfig        `json:"claude"`
 	Memory        MemoryConfig        `json:"memory"`
+	Storage       StorageConfig       `json:"storage"`
+	RAG           RAGConfig           `json:"rag"`
 
 	// Feature toggles
 	Features      FeatureConfig       `json:"features"`
@@ -55,6 +57,58 @@ type PostgresConfig struct {
 	User     string `json:"user" env:"POSTGRES_USER"`
 	Password string `json:"password" env:"POSTGRES_PASSWORD"`
 	SSLMode  string `json:"ssl_mode" env:"POSTGRES_SSLMODE"`
+}
+
+// StorageConfig contains file storage configuration.
+type StorageConfig struct {
+	Enabled  bool        `json:"enabled" env:"FEATURE_STORAGE"`
+	Type     string      `json:"type" env:"STORAGE_TYPE"` // local, s3, gcs, azure, minio
+	Local    LocalStorageConfig `json:"local,omitempty"`
+	S3       S3StorageConfig    `json:"s3,omitempty"`
+}
+
+// LocalStorageConfig contains local file storage configuration.
+type LocalStorageConfig struct {
+	BasePath    string `json:"base_path" env:"STORAGE_LOCAL_PATH"`
+	BaseURL     string `json:"base_url" env:"STORAGE_LOCAL_URL"`
+	MaxFileSize int64  `json:"max_file_size"` // in bytes
+}
+
+// S3StorageConfig contains S3/MinIO storage configuration.
+type S3StorageConfig struct {
+	Region          string `json:"region" env:"AWS_REGION"`
+	Endpoint        string `json:"endpoint" env:"S3_ENDPOINT"` // For MinIO
+	AccessKeyID     string `json:"access_key_id" env:"AWS_ACCESS_KEY_ID"`
+	SecretAccessKey string `json:"secret_access_key" env:"AWS_SECRET_ACCESS_KEY"`
+	Bucket          string `json:"bucket" env:"S3_BUCKET"`
+	UsePathStyle    bool   `json:"use_path_style" env:"S3_PATH_STYLE"` // Required for MinIO
+}
+
+// RAGConfig contains RAG/embedding configuration.
+type RAGConfig struct {
+	Enabled          bool            `json:"enabled" env:"FEATURE_RAG"`
+	Embedding        EmbeddingConfig `json:"embedding"`
+	Chunking         ChunkingConfig  `json:"chunking"`
+	DefaultNamespace string          `json:"default_namespace"`
+}
+
+// EmbeddingConfig contains embedding model configuration.
+type EmbeddingConfig struct {
+	Provider   string `json:"provider" env:"EMBEDDING_PROVIDER"` // openai, cohere, local
+	Model      string `json:"model" env:"EMBEDDING_MODEL"`
+	APIKey     string `json:"api_key" env:"EMBEDDING_API_KEY"`
+	Endpoint   string `json:"endpoint" env:"EMBEDDING_ENDPOINT"` // For local/custom
+	Dimensions int    `json:"dimensions"`
+	BatchSize  int    `json:"batch_size"`
+}
+
+// ChunkingConfig contains document chunking configuration.
+type ChunkingConfig struct {
+	Strategy     string `json:"strategy"` // fixed, sentence, paragraph, semantic, code, markdown
+	ChunkSize    int    `json:"chunk_size"`
+	ChunkOverlap int    `json:"chunk_overlap"`
+	MinChunkSize int    `json:"min_chunk_size"`
+	MaxChunkSize int    `json:"max_chunk_size"`
 }
 
 // FeatureConfig contains feature toggle configuration.
@@ -150,6 +204,35 @@ func DefaultConfig() *Config {
 				Database: "claude_orchestrator",
 				User:     "postgres",
 				SSLMode:  "disable",
+			},
+		},
+		Storage: StorageConfig{
+			Enabled: true,
+			Type:    "local",
+			Local: LocalStorageConfig{
+				BasePath:    "./storage",
+				MaxFileSize: 100 * 1024 * 1024, // 100MB
+			},
+			S3: S3StorageConfig{
+				Region:       "us-east-1",
+				UsePathStyle: false,
+			},
+		},
+		RAG: RAGConfig{
+			Enabled:          true,
+			DefaultNamespace: "default",
+			Embedding: EmbeddingConfig{
+				Provider:   "openai",
+				Model:      "text-embedding-3-small",
+				Dimensions: 1536,
+				BatchSize:  100,
+			},
+			Chunking: ChunkingConfig{
+				Strategy:     "sentence",
+				ChunkSize:    1000,
+				ChunkOverlap: 200,
+				MinChunkSize: 100,
+				MaxChunkSize: 2000,
 			},
 		},
 		Features: FeatureConfig{
@@ -316,6 +399,52 @@ func applyEnvironmentOverrides(config *Config) {
 	if v := os.Getenv("FEATURE_PARALLEL_EXECUTION"); v != "" {
 		config.Features.ParallelExecution = parseBool(v)
 	}
+
+	// Storage
+	if v := os.Getenv("FEATURE_STORAGE"); v != "" {
+		config.Storage.Enabled = parseBool(v)
+	}
+	if v := os.Getenv("STORAGE_TYPE"); v != "" {
+		config.Storage.Type = v
+	}
+	if v := os.Getenv("STORAGE_LOCAL_PATH"); v != "" {
+		config.Storage.Local.BasePath = v
+	}
+	if v := os.Getenv("S3_ENDPOINT"); v != "" {
+		config.Storage.S3.Endpoint = v
+	}
+	if v := os.Getenv("AWS_REGION"); v != "" {
+		config.Storage.S3.Region = v
+	}
+	if v := os.Getenv("AWS_ACCESS_KEY_ID"); v != "" {
+		config.Storage.S3.AccessKeyID = v
+	}
+	if v := os.Getenv("AWS_SECRET_ACCESS_KEY"); v != "" {
+		config.Storage.S3.SecretAccessKey = v
+	}
+	if v := os.Getenv("S3_BUCKET"); v != "" {
+		config.Storage.S3.Bucket = v
+	}
+	if v := os.Getenv("S3_PATH_STYLE"); v != "" {
+		config.Storage.S3.UsePathStyle = parseBool(v)
+	}
+
+	// RAG
+	if v := os.Getenv("FEATURE_RAG"); v != "" {
+		config.RAG.Enabled = parseBool(v)
+	}
+	if v := os.Getenv("EMBEDDING_PROVIDER"); v != "" {
+		config.RAG.Embedding.Provider = v
+	}
+	if v := os.Getenv("EMBEDDING_MODEL"); v != "" {
+		config.RAG.Embedding.Model = v
+	}
+	if v := os.Getenv("EMBEDDING_API_KEY"); v != "" {
+		config.RAG.Embedding.APIKey = v
+	}
+	if v := os.Getenv("EMBEDDING_ENDPOINT"); v != "" {
+		config.RAG.Embedding.Endpoint = v
+	}
 }
 
 func parseBool(s string) bool {
@@ -353,6 +482,10 @@ func (c *Config) IsFeatureEnabled(feature string) bool {
 		return c.Features.CodeReview
 	case "parallel_execution":
 		return c.Features.ParallelExecution
+	case "storage", "file_storage":
+		return c.Storage.Enabled
+	case "rag", "embeddings":
+		return c.RAG.Enabled
 	default:
 		return false
 	}

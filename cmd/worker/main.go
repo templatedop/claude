@@ -11,6 +11,8 @@ import (
 	"github.com/anthropics/claude-orchestrator/internal/activity"
 	"github.com/anthropics/claude-orchestrator/internal/config"
 	"github.com/anthropics/claude-orchestrator/internal/memory"
+	"github.com/anthropics/claude-orchestrator/internal/rag"
+	"github.com/anthropics/claude-orchestrator/internal/storage"
 	"github.com/anthropics/claude-orchestrator/internal/workflow"
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/worker"
@@ -42,6 +44,8 @@ func main() {
 	log.Printf("  - Framework Learning: %v", cfg.Features.FrameworkLearning.Enabled)
 	log.Printf("  - Code Review: %v", cfg.Features.CodeReview)
 	log.Printf("  - Parallel Execution: %v", cfg.Features.ParallelExecution)
+	log.Printf("  - Cloud Storage: %v (%s)", cfg.Storage.Enabled, cfg.Storage.Type)
+	log.Printf("  - RAG/Embeddings: %v (%s)", cfg.RAG.Enabled, cfg.RAG.Embedding.Provider)
 
 	// Create Temporal client
 	c, err := client.Dial(client.Options{
@@ -111,6 +115,67 @@ func main() {
 		if err != nil {
 			log.Printf("Warning: Failed to create framework activities: %v", err)
 		}
+	}
+
+	// Create storage activities
+	var storageActivities *activity.StorageActivities
+	if cfg.Storage.Enabled {
+		var fileStore storage.Store
+		switch cfg.Storage.Type {
+		case "s3", "minio":
+			s3Cfg := storage.S3Config{
+				Region:          cfg.Storage.S3.Region,
+				Endpoint:        cfg.Storage.S3.Endpoint,
+				AccessKeyID:     cfg.Storage.S3.AccessKeyID,
+				SecretAccessKey: cfg.Storage.S3.SecretAccessKey,
+				UsePathStyle:    cfg.Storage.S3.UsePathStyle,
+			}
+			s3Store, err := storage.NewS3Store(s3Cfg)
+			if err != nil {
+				log.Printf("Warning: Failed to create S3 store, falling back to local: %v", err)
+				localCfg := storage.LocalConfig{
+					BasePath:    cfg.Storage.Local.BasePath,
+					MaxFileSize: cfg.Storage.Local.MaxFileSize,
+				}
+				fileStore, _ = storage.NewLocalStore(localCfg)
+			} else {
+				fileStore = s3Store
+			}
+		default: // local
+			localCfg := storage.LocalConfig{
+				BasePath:    cfg.Storage.Local.BasePath,
+				BaseURL:     cfg.Storage.Local.BaseURL,
+				MaxFileSize: cfg.Storage.Local.MaxFileSize,
+			}
+			localStore, err := storage.NewLocalStore(localCfg)
+			if err != nil {
+				log.Printf("Warning: Failed to create local storage: %v", err)
+			} else {
+				fileStore = localStore
+			}
+		}
+		if fileStore != nil {
+			storageActivities = activity.NewStorageActivities(fileStore)
+		}
+	}
+
+	// Create RAG activities
+	var ragActivities *activity.RAGActivities
+	if cfg.RAG.Enabled {
+		embeddingConfig := rag.EmbeddingConfig{
+			Provider: rag.EmbeddingProvider(cfg.RAG.Embedding.Provider),
+			Model:    rag.EmbeddingModel(cfg.RAG.Embedding.Model),
+			APIKey:   cfg.RAG.Embedding.APIKey,
+			Endpoint: cfg.RAG.Embedding.Endpoint,
+		}
+		chunkOpts := rag.ChunkOptions{
+			Strategy:     rag.ChunkingStrategy(cfg.RAG.Chunking.Strategy),
+			ChunkSize:    cfg.RAG.Chunking.ChunkSize,
+			ChunkOverlap: cfg.RAG.Chunking.ChunkOverlap,
+			MinChunkSize: cfg.RAG.Chunking.MinChunkSize,
+			MaxChunkSize: cfg.RAG.Chunking.MaxChunkSize,
+		}
+		ragActivities = activity.NewRAGActivities(memoryStore, embeddingConfig, chunkOpts)
 	}
 
 	// Create worker
@@ -183,6 +248,32 @@ func main() {
 		w.RegisterActivity(frameworkActivities.GenerateFrameworkPrompt)
 		w.RegisterActivity(frameworkActivities.ListFrameworks)
 		log.Println("Registered framework learning activities")
+	}
+
+	// Register storage activities
+	if storageActivities != nil {
+		w.RegisterActivity(storageActivities.Upload)
+		w.RegisterActivity(storageActivities.Download)
+		w.RegisterActivity(storageActivities.DeleteFile)
+		w.RegisterActivity(storageActivities.GetMetadata)
+		w.RegisterActivity(storageActivities.GenerateUploadURL)
+		w.RegisterActivity(storageActivities.GenerateDownloadURL)
+		w.RegisterActivity(storageActivities.ListFiles)
+		w.RegisterActivity(storageActivities.CopyFile)
+		w.RegisterActivity(storageActivities.CreateBucket)
+		w.RegisterActivity(storageActivities.ListBuckets)
+		w.RegisterActivity(storageActivities.FileExists)
+		log.Printf("Registered cloud storage activities (%s)", cfg.Storage.Type)
+	}
+
+	// Register RAG activities
+	if ragActivities != nil {
+		w.RegisterActivity(ragActivities.IndexDocument)
+		w.RegisterActivity(ragActivities.Search)
+		w.RegisterActivity(ragActivities.DeleteDocument)
+		w.RegisterActivity(ragActivities.GenerateRAGPrompt)
+		w.RegisterActivity(ragActivities.ListDocuments)
+		log.Printf("Registered RAG activities (%s embeddings)", cfg.RAG.Embedding.Provider)
 	}
 
 	// Start worker in background

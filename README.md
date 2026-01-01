@@ -43,6 +43,8 @@ A Go + Temporal-based orchestration system for coordinating multiple Claude AI a
 - **Document Analysis**: Read and analyze project documents to extract requirements
 - **Requirements Tracking**: Track, manage, and link requirements to implementations
 - **Framework Learning**: Learn any framework and feed knowledge to Claude for development
+- **Cloud Storage**: Store and serve files via S3, MinIO, GCS, or local filesystem with signed URLs
+- **RAG (Retrieval-Augmented Generation)**: Index documents with embeddings for semantic search
 
 ## Prerequisites
 
@@ -415,6 +417,188 @@ frameworks, _ := frameworkActivities.ListFrameworks(ctx)
 }
 ```
 
+## Cloud Storage
+
+The cloud storage feature provides a unified interface for storing and serving files across different backends.
+
+### Supported Backends
+
+- **Local**: Local filesystem storage with file:// URLs
+- **S3**: Amazon S3 and compatible services
+- **MinIO**: Self-hosted S3-compatible storage
+- **GCS**: Google Cloud Storage (planned)
+- **Azure**: Azure Blob Storage (planned)
+
+### Usage
+
+```go
+// Upload a file
+storageActivities.Upload(ctx, UploadFileRequest{
+    Content:     []byte("file content"),
+    Bucket:      "my-bucket",
+    Path:        "documents/report.pdf",
+    ContentType: "application/pdf",
+    Metadata:    map[string]string{"author": "claude"},
+    Public:      false,
+})
+
+// Generate upload URL (for direct client uploads)
+storageActivities.GenerateUploadURL(ctx, GenerateUploadURLRequest{
+    Bucket:           "my-bucket",
+    Path:             "uploads/image.png",
+    ContentType:      "image/png",
+    ExpirationSeconds: 3600, // 1 hour
+})
+
+// Generate download URL (signed URL for temporary access)
+storageActivities.GenerateDownloadURL(ctx, GenerateDownloadURLRequest{
+    Bucket:            "my-bucket",
+    Path:              "documents/report.pdf",
+    ExpirationSeconds: 3600,
+})
+
+// List files
+storageActivities.ListFiles(ctx, ListStorageFilesRequest{
+    Bucket:    "my-bucket",
+    Prefix:    "documents/",
+    Recursive: true,
+})
+```
+
+### Configuration
+
+```yaml
+storage:
+  enabled: true
+  type: "local"  # local, s3, minio
+  local:
+    base_path: "./storage"
+    max_file_size: 104857600  # 100MB
+  s3:
+    region: "us-east-1"
+    endpoint: ""  # For MinIO: "http://localhost:9000"
+    access_key_id: ""
+    secret_access_key: ""
+    bucket: "my-bucket"
+    use_path_style: false  # true for MinIO
+```
+
+### Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `FEATURE_STORAGE` | Enable/disable cloud storage |
+| `STORAGE_TYPE` | Storage backend (local, s3, minio) |
+| `STORAGE_LOCAL_PATH` | Base path for local storage |
+| `S3_ENDPOINT` | Custom S3 endpoint for MinIO |
+| `AWS_REGION` | AWS region |
+| `AWS_ACCESS_KEY_ID` | AWS access key |
+| `AWS_SECRET_ACCESS_KEY` | AWS secret key |
+| `S3_BUCKET` | Default S3 bucket |
+
+## RAG (Retrieval-Augmented Generation)
+
+The RAG feature enables semantic search over documents using vector embeddings. This is essential for building AI applications that need to retrieve relevant context from large document collections.
+
+### Features
+
+- **Document Chunking**: Split documents into semantic chunks (sentence, paragraph, code-aware)
+- **Embedding Generation**: Generate embeddings via OpenAI, Cohere, or local models
+- **Vector Search**: Find semantically similar content
+- **Importance Weighting**: Weight chunks by importance (0-1 scale)
+- **Context Retrieval**: Get surrounding chunks for better context
+- **Namespaces**: Isolate search by user, project, or category
+
+### Usage
+
+```go
+// Index a document
+ragActivities.IndexDocument(ctx, IndexDocumentRequest{
+    Content:   "Your document content...",
+    Title:     "Technical Specification",
+    Namespace: "project-123",
+    Keywords:  []string{"api", "authentication"},
+    ChunkSize: 1000,
+})
+
+// Search for relevant content
+ragActivities.Search(ctx, SearchRequest{
+    Query:              "How does authentication work?",
+    Namespace:          "project-123",
+    TopK:               5,
+    MinScore:           0.7,
+    IncludeContext:     true,
+    ContextBefore:      1,
+    ContextAfter:       1,
+    WeightByImportance: true,
+})
+
+// Generate RAG prompt for Claude
+ragActivities.GenerateRAGPrompt(ctx, GenerateRAGPromptRequest{
+    Query:            "Explain the authentication flow",
+    SearchResults:    searchResults,
+    MaxContextTokens: 4000,
+    IncludeSources:   true,
+})
+
+// Delete indexed document
+ragActivities.DeleteDocument(ctx, DeleteDocumentRequest{
+    DocumentID: "doc-123",
+    Namespace:  "project-123",
+})
+```
+
+### Chunking Strategies
+
+| Strategy | Description | Best For |
+|----------|-------------|----------|
+| `fixed` | Fixed character size | General text |
+| `sentence` | Sentence boundaries | Prose, documentation |
+| `paragraph` | Paragraph boundaries | Articles, reports |
+| `semantic` | Semantic sections | Mixed content |
+| `code` | Function/class boundaries | Source code |
+| `markdown` | Header-based sections | Markdown docs |
+
+### Embedding Models
+
+| Provider | Model | Dimensions |
+|----------|-------|------------|
+| OpenAI | text-embedding-3-small | 1536 |
+| OpenAI | text-embedding-3-large | 3072 |
+| OpenAI | text-embedding-ada-002 | 1536 |
+| Cohere | embed-english-v3.0 | 1024 |
+| Cohere | embed-multilingual-v3.0 | 1024 |
+
+### Configuration
+
+```yaml
+rag:
+  enabled: true
+  default_namespace: "default"
+  embedding:
+    provider: "openai"
+    model: "text-embedding-3-small"
+    api_key: ""  # Or use EMBEDDING_API_KEY env var
+    dimensions: 1536
+    batch_size: 100
+  chunking:
+    strategy: "sentence"
+    chunk_size: 1000
+    chunk_overlap: 200
+    min_chunk_size: 100
+    max_chunk_size: 2000
+```
+
+### Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `FEATURE_RAG` | Enable/disable RAG |
+| `EMBEDDING_PROVIDER` | Embedding provider (openai, cohere, local) |
+| `EMBEDDING_MODEL` | Model name |
+| `EMBEDDING_API_KEY` | API key for embedding service |
+| `EMBEDDING_ENDPOINT` | Custom endpoint for local models |
+
 ## CLI Commands
 
 ### Run a Workflow
@@ -568,7 +752,9 @@ claude-orchestrator/
 │   │   ├── memory.go        # Memory operations
 │   │   ├── document.go      # Document analysis
 │   │   ├── requirements.go  # Requirements tracking
-│   │   └── framework.go     # Framework learning
+│   │   ├── framework.go     # Framework learning
+│   │   ├── storage.go       # Cloud storage activities
+│   │   └── rag.go           # RAG activities
 │   ├── config/
 │   │   ├── config.go        # Configuration management
 │   │   └── config_test.go   # Configuration tests
@@ -577,6 +763,13 @@ claude-orchestrator/
 │   │   ├── memory.go        # In-memory implementation
 │   │   ├── memory_test.go   # Memory tests
 │   │   └── postgres.go      # PostgreSQL implementation
+│   ├── storage/
+│   │   ├── store.go         # Storage interface
+│   │   ├── local.go         # Local filesystem storage
+│   │   └── s3.go            # S3/MinIO storage
+│   ├── rag/
+│   │   ├── chunker.go       # Document chunking
+│   │   └── embeddings.go    # Embedding generation
 │   └── domain/
 │       ├── agent.go         # Agent types
 │       ├── task.go          # Task definitions
