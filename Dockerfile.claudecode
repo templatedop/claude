@@ -1,0 +1,126 @@
+# Dockerfile.claudecode - Worker image with Claude Code CLI support
+#
+# This image allows using Claude Code (subscription-based) instead of API credits.
+# Requires mounting ~/.claude/ from host for authentication.
+#
+# Build:
+#   docker build -f Dockerfile.claudecode -t claude-orchestrator-claudecode .
+#
+# Run:
+#   docker run -v $HOME/.claude:/home/orchestrator/.claude:ro \
+#     -e CLAUDE_PROVIDER=claude_code \
+#     claude-orchestrator-claudecode
+
+# Build stage
+FROM golang:1.21-alpine AS builder
+
+WORKDIR /app
+
+# Install dependencies
+RUN apk add --no-cache git ca-certificates tzdata
+
+# Copy go mod files
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy source code
+COPY . .
+
+# Build binaries with version info
+ARG VERSION=dev
+ARG COMMIT=unknown
+ARG BUILD_TIME=unknown
+
+RUN CGO_ENABLED=0 GOOS=linux go build \
+    -ldflags="-w -s -X main.Version=${VERSION} -X main.Commit=${COMMIT} -X main.BuildTime=${BUILD_TIME}" \
+    -o /bin/worker ./cmd/worker
+
+RUN CGO_ENABLED=0 GOOS=linux go build \
+    -ldflags="-w -s -X main.Version=${VERSION} -X main.Commit=${COMMIT} -X main.BuildTime=${BUILD_TIME}" \
+    -o /bin/api ./cmd/api
+
+RUN CGO_ENABLED=0 GOOS=linux go build \
+    -ldflags="-w -s -X main.Version=${VERSION} -X main.Commit=${COMMIT} -X main.BuildTime=${BUILD_TIME}" \
+    -o /bin/cli ./cmd/cli
+
+# Claude Code worker image
+FROM node:20-alpine AS claudecode-worker
+
+# Install system dependencies
+RUN apk add --no-cache ca-certificates git tzdata bash
+
+# Install Claude Code CLI globally
+RUN npm install -g @anthropic-ai/claude-code
+
+# Create non-root user
+RUN addgroup -g 1000 orchestrator && \
+    adduser -u 1000 -G orchestrator -h /home/orchestrator -D orchestrator
+
+WORKDIR /app
+
+# Create directories for storage, workspace, and claude config
+RUN mkdir -p /app/storage /app/workspace /app/config /home/orchestrator/.claude && \
+    chown -R orchestrator:orchestrator /app /home/orchestrator/.claude
+
+# Copy binaries from builder
+COPY --from=builder /bin/worker /app/worker
+COPY --from=builder /bin/api /app/api
+COPY --from=builder /bin/cli /app/claude-orchestrator
+
+# Set permissions
+RUN chown -R orchestrator:orchestrator /app
+
+USER orchestrator
+
+# Environment variables for Claude Code provider
+ENV CLAUDE_PROVIDER=claude_code
+ENV WORKING_DIR=/app/workspace
+ENV CLAUDE_ALLOWED_TOOLS=Read,Write,Bash,Glob,Grep
+
+# Verify Claude CLI is available
+RUN claude --version || echo "Warning: Claude CLI not properly installed"
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD pgrep -x worker || exit 1
+
+# Default command
+CMD ["/app/worker"]
+
+# All-in-one Claude Code image
+FROM node:20-alpine AS claudecode-all
+
+# Install system dependencies
+RUN apk add --no-cache ca-certificates git tzdata bash
+
+# Install Claude Code CLI globally
+RUN npm install -g @anthropic-ai/claude-code
+
+# Create non-root user
+RUN addgroup -g 1000 orchestrator && \
+    adduser -u 1000 -G orchestrator -h /home/orchestrator -D orchestrator
+
+WORKDIR /app
+
+# Create directories
+RUN mkdir -p /app/storage /app/workspace /app/config /home/orchestrator/.claude && \
+    chown -R orchestrator:orchestrator /app /home/orchestrator/.claude
+
+# Copy binaries from builder
+COPY --from=builder /bin/worker /app/worker
+COPY --from=builder /bin/api /app/api
+COPY --from=builder /bin/cli /app/claude-orchestrator
+
+# Set permissions
+RUN chown -R orchestrator:orchestrator /app
+
+USER orchestrator
+
+# Environment variables for Claude Code provider
+ENV CLAUDE_PROVIDER=claude_code
+ENV WORKING_DIR=/app/workspace
+
+EXPOSE 8080
+
+# Default command
+CMD ["/app/worker"]

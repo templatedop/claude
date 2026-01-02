@@ -50,7 +50,9 @@ A Go + Temporal-based orchestration system for coordinating multiple Claude AI a
 
 - Go 1.21 or later
 - Temporal server (can run locally with Docker)
-- Anthropic API key for Claude access
+- Claude access via one of:
+  - **API Provider**: Anthropic API key (pay-per-token credits)
+  - **Claude Code Provider**: Claude Code CLI with subscription
 - PostgreSQL (optional, for persistent memory)
 
 ## Installation
@@ -89,8 +91,24 @@ temporal server start-dev
 
 ### 2. Start the Worker
 
+**Option A: Using API Provider (pay-per-token)**
 ```bash
+export CLAUDE_PROVIDER=api
 export ANTHROPIC_API_KEY=your-api-key
+export TEMPORAL_ADDRESS=localhost:7233
+export WORKING_DIR=$(pwd)
+
+./bin/worker
+```
+
+**Option B: Using Claude Code Provider (subscription-based)**
+```bash
+# Install and authenticate Claude Code CLI first
+npm install -g @anthropic-ai/claude-code
+claude login
+
+# Then start the worker
+export CLAUDE_PROVIDER=claude_code
 export TEMPORAL_ADDRESS=localhost:7233
 export WORKING_DIR=$(pwd)
 
@@ -123,6 +141,59 @@ curl -X POST http://localhost:8080/api/v1/workflows \
   }'
 ```
 
+## Claude Code Integration
+
+The orchestrator supports two Claude providers:
+
+| Provider | Billing Model | Authentication | Docker Support |
+|----------|--------------|----------------|----------------|
+| `api` | Pay-per-token credits | `ANTHROPIC_API_KEY` | Full support |
+| `claude_code` | Claude subscription | `claude login` | Requires auth mount |
+
+### Using Claude Code (Subscription)
+
+Claude Code lets you use your Claude subscription instead of API credits:
+
+```bash
+# 1. Install Claude Code CLI
+npm install -g @anthropic-ai/claude-code
+
+# 2. Authenticate (opens browser)
+claude login
+
+# 3. Run worker with Claude Code provider
+export CLAUDE_PROVIDER=claude_code
+./bin/worker
+```
+
+### Docker with Claude Code
+
+For Docker deployments with Claude Code, mount your auth credentials:
+
+```bash
+# Build Claude Code-enabled image
+docker build -f Dockerfile.claudecode -t claude-orchestrator-claudecode .
+
+# Run with auth mount
+docker run -v $HOME/.claude:/home/orchestrator/.claude:ro \
+  -e CLAUDE_PROVIDER=claude_code \
+  claude-orchestrator-claudecode
+```
+
+Or use the dedicated docker-compose file:
+
+```bash
+docker-compose -f docker-compose.claude-code.yml up -d
+```
+
+### Provider Auto-Detection
+
+If `CLAUDE_PROVIDER` is not set:
+- Uses `api` if `ANTHROPIC_API_KEY` is set
+- Uses `claude_code` if no API key is present
+
+For detailed documentation, see [docs/CLAUDE_CODE_INTEGRATION.md](docs/CLAUDE_CODE_INTEGRATION.md).
+
 ## Configuration
 
 ### Configuration File
@@ -136,8 +207,17 @@ temporal:
   task_queue: "claude-orchestrator"
 
 claude:
+  provider: "api"  # or "claude_code" for subscription
   model: "claude-sonnet-4-20250514"
   max_tokens: 4096
+  # Claude Code specific settings (only used when provider is "claude_code")
+  working_dir: "."
+  allowed_tools:
+    - "Read"
+    - "Write"
+    - "Bash"
+    - "Glob"
+    - "Grep"
 
 workflow:
   max_agents: 10
@@ -198,7 +278,10 @@ agents:
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `ANTHROPIC_API_KEY` | Anthropic API key (required) | - |
+| `CLAUDE_PROVIDER` | Claude provider: `api` or `claude_code` | `api` |
+| `ANTHROPIC_API_KEY` | Anthropic API key (required for `api` provider) | - |
+| `CLAUDE_MODEL` | Claude model to use | `claude-sonnet-4-20250514` |
+| `CLAUDE_ALLOWED_TOOLS` | Allowed tools for Claude Code (comma-separated) | `Read,Write,Bash,Glob,Grep` |
 | `TEMPORAL_ADDRESS` | Temporal server address | `localhost:7233` |
 | `TEMPORAL_NAMESPACE` | Temporal namespace | `default` |
 | `TASK_QUEUE` | Temporal task queue name | `claude-orchestrator` |
