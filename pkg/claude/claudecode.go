@@ -216,9 +216,12 @@ func (c *ClaudeCodeClient) Complete(ctx context.Context, req CompletionRequest) 
 	// Run command
 	err := cmd.Run()
 	if err != nil {
-		stderrStr := stderr.String()
-		if stderrStr != "" {
-			return nil, fmt.Errorf("claude CLI error: %s\nstderr: %s", err, stderrStr)
+		stderrStr := strings.TrimSpace(stderr.String())
+		stdoutStr := strings.TrimSpace(stdout.String())
+
+		// Include both stdout and stderr in error for debugging
+		if stderrStr != "" || stdoutStr != "" {
+			return nil, fmt.Errorf("claude CLI error: %s\nstderr: %s\nstdout: %s", err, stderrStr, stdoutStr)
 		}
 		return nil, fmt.Errorf("failed to run claude CLI: %w", err)
 	}
