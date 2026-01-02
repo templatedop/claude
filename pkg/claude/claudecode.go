@@ -182,9 +182,9 @@ func (c *ClaudeCodeClient) Complete(ctx context.Context, req CompletionRequest) 
 		args = append(args, "--allowedTools", strings.Join(tools, ","))
 	}
 
-	// Add the prompt as the last argument
-	// Use "-" to read from stdin if prompt contains problematic characters
-	args = append(args, prompt)
+	// Use "-" to read prompt from stdin - more reliable for complex prompts
+	// with newlines, quotes, and special characters
+	args = append(args, "-")
 
 	// Create command with context
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
@@ -204,6 +204,9 @@ func (c *ClaudeCodeClient) Complete(ctx context.Context, req CompletionRequest) 
 		}
 	}
 	cmd.Env = filteredEnv
+
+	// Pipe prompt via stdin for reliability
+	cmd.Stdin = strings.NewReader(prompt)
 
 	// Capture both stdout and stderr
 	var stdout, stderr bytes.Buffer
