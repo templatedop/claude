@@ -59,7 +59,7 @@ func AgentWorkflow(ctx workflow.Context, input AgentWorkflowInput) (*AgentWorkfl
 	// Set up activity options
 	activityOptions := workflow.ActivityOptions{
 		StartToCloseTimeout: DefaultActivityTimeout,
-		HeartbeatTimeout:    2 * time.Minute,
+		HeartbeatTimeout:    5 * time.Minute, // Increased for Claude Code CLI
 		RetryPolicy: &temporal.RetryPolicy{
 			InitialInterval:    time.Second,
 			BackoffCoefficient: 2.0,
