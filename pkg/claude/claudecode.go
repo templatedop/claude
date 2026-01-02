@@ -135,12 +135,6 @@ func (c *ClaudeCodeClient) Complete(ctx context.Context, req CompletionRequest) 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	// Build the prompt with system context
-	fullPrompt := req.Prompt
-	if req.System != "" {
-		fullPrompt = fmt.Sprintf("System: %s\n\nUser: %s", req.System, req.Prompt)
-	}
-
 	// Determine tools to use
 	tools := req.AllowedTools
 	if len(tools) == 0 {
@@ -168,10 +162,13 @@ func (c *ClaudeCodeClient) Complete(ctx context.Context, req CompletionRequest) 
 		args = append(args, "--model", model)
 	}
 
-	// Add max tokens if specified
-	if req.MaxTokens > 0 {
-		args = append(args, "--max-tokens", fmt.Sprintf("%d", req.MaxTokens))
+	// Add system prompt if specified (using proper CLI flag)
+	if req.System != "" {
+		args = append(args, "--system-prompt", req.System)
 	}
+
+	// Note: Claude Code CLI does not support --max-tokens option
+	// Token limits are managed by the CLI internally
 
 	// Add allowed tools
 	if len(tools) > 0 {
@@ -179,7 +176,7 @@ func (c *ClaudeCodeClient) Complete(ctx context.Context, req CompletionRequest) 
 	}
 
 	// Add the prompt
-	args = append(args, fullPrompt)
+	args = append(args, req.Prompt)
 
 	// Create command with context
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
