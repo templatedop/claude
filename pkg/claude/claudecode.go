@@ -2,6 +2,7 @@ package claude
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -135,6 +136,12 @@ func (c *ClaudeCodeClient) Complete(ctx context.Context, req CompletionRequest) 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	// Validate prompt
+	prompt := strings.TrimSpace(req.Prompt)
+	if prompt == "" {
+		return nil, fmt.Errorf("prompt cannot be empty")
+	}
+
 	// Determine tools to use
 	tools := req.AllowedTools
 	if len(tools) == 0 {
@@ -175,8 +182,9 @@ func (c *ClaudeCodeClient) Complete(ctx context.Context, req CompletionRequest) 
 		args = append(args, "--allowedTools", strings.Join(tools, ","))
 	}
 
-	// Add the prompt
-	args = append(args, req.Prompt)
+	// Add the prompt as the last argument
+	// Use "-" to read from stdin if prompt contains problematic characters
+	args = append(args, prompt)
 
 	// Create command with context
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
@@ -197,17 +205,23 @@ func (c *ClaudeCodeClient) Complete(ctx context.Context, req CompletionRequest) 
 	}
 	cmd.Env = filteredEnv
 
-	// Capture output
-	output, err := cmd.Output()
+	// Capture both stdout and stderr
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	// Run command
+	err := cmd.Run()
 	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			return nil, fmt.Errorf("claude CLI error: %s\nstderr: %s", err, string(exitErr.Stderr))
+		stderrStr := stderr.String()
+		if stderrStr != "" {
+			return nil, fmt.Errorf("claude CLI error: %s\nstderr: %s", err, stderrStr)
 		}
 		return nil, fmt.Errorf("failed to run claude CLI: %w", err)
 	}
 
 	// Parse JSON output
-	return c.parseOutput(output)
+	return c.parseOutput(stdout.Bytes())
 }
 
 // parseOutput parses the JSON output from Claude Code CLI.
