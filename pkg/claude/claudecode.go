@@ -182,9 +182,9 @@ func (c *ClaudeCodeClient) Complete(ctx context.Context, req CompletionRequest) 
 		args = append(args, "--allowedTools", strings.Join(tools, ","))
 	}
 
-	// Use "-" to read prompt from stdin - more reliable for complex prompts
-	// with newlines, quotes, and special characters
-	args = append(args, "-")
+	// Don't add prompt as argument - pass via stdin instead
+	// This is more reliable for complex prompts with newlines and special characters
+	// Claude CLI reads from stdin when no prompt argument is provided
 
 	// Create command with context
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
