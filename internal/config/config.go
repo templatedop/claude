@@ -71,10 +71,27 @@ type TemporalConfig struct {
 
 // ClaudeConfig contains Claude API configuration.
 type ClaudeConfig struct {
+	// Provider specifies which Claude provider to use: "api" or "claude_code"
+	// - "api": Uses Anthropic API directly (requires API credits)
+	// - "claude_code": Uses Claude Code CLI (uses your Claude subscription)
+	Provider    string  `json:"provider" env:"CLAUDE_PROVIDER"`
+
+	// APIKey is required when using the "api" provider
 	APIKey      string  `json:"api_key" env:"ANTHROPIC_API_KEY"`
+
+	// Model to use for completions
 	Model       string  `json:"model" env:"CLAUDE_MODEL"`
 	MaxTokens   int     `json:"max_tokens" env:"CLAUDE_MAX_TOKENS"`
 	Temperature float64 `json:"temperature" env:"CLAUDE_TEMPERATURE"`
+
+	// WorkingDir is the working directory for Claude Code operations
+	// Only used when Provider is "claude_code"
+	WorkingDir  string  `json:"working_dir" env:"WORKING_DIR"`
+
+	// AllowedTools specifies which tools Claude Code can use
+	// Only used when Provider is "claude_code"
+	// Default: ["Read", "Write", "Bash", "Glob", "Grep"]
+	AllowedTools []string `json:"allowed_tools" env:"CLAUDE_ALLOWED_TOOLS"`
 }
 
 // MemoryConfig contains memory store configuration.
@@ -226,9 +243,12 @@ func DefaultConfig() *Config {
 			TaskQueue: "claude-orchestrator",
 		},
 		Claude: ClaudeConfig{
-			Model:       "claude-sonnet-4-20250514",
-			MaxTokens:   4096,
-			Temperature: 0.7,
+			Provider:     "api", // Default to API; set to "claude_code" to use subscription
+			Model:        "claude-sonnet-4-20250514",
+			MaxTokens:    4096,
+			Temperature:  0.7,
+			WorkingDir:   ".",
+			AllowedTools: []string{"Read", "Write", "Bash", "Glob", "Grep"},
 		},
 		Memory: MemoryConfig{
 			Type: "inmemory",
@@ -412,11 +432,20 @@ func applyEnvironmentOverrides(config *Config) {
 	}
 
 	// Claude
+	if v := os.Getenv("CLAUDE_PROVIDER"); v != "" {
+		config.Claude.Provider = v
+	}
 	if v := os.Getenv("ANTHROPIC_API_KEY"); v != "" {
 		config.Claude.APIKey = v
 	}
 	if v := os.Getenv("CLAUDE_MODEL"); v != "" {
 		config.Claude.Model = v
+	}
+	if v := os.Getenv("WORKING_DIR"); v != "" {
+		config.Claude.WorkingDir = v
+	}
+	if v := os.Getenv("CLAUDE_ALLOWED_TOOLS"); v != "" {
+		config.Claude.AllowedTools = strings.Split(v, ",")
 	}
 
 	// Memory
@@ -534,8 +563,18 @@ func parseBool(s string) bool {
 
 // Validate validates the configuration.
 func (c *Config) Validate() error {
-	if c.Claude.APIKey == "" {
-		return fmt.Errorf("ANTHROPIC_API_KEY is required")
+	// Validate Claude configuration based on provider
+	switch c.Claude.Provider {
+	case "api", "":
+		// API provider requires an API key
+		if c.Claude.APIKey == "" {
+			return fmt.Errorf("ANTHROPIC_API_KEY is required when using 'api' provider")
+		}
+	case "claude_code":
+		// Claude Code provider uses subscription auth, no API key needed
+		// The CLI will handle authentication
+	default:
+		return fmt.Errorf("invalid Claude provider: %s (must be 'api' or 'claude_code')", c.Claude.Provider)
 	}
 
 	if c.Temporal.Address == "" {
@@ -547,6 +586,11 @@ func (c *Config) Validate() error {
 	}
 
 	return nil
+}
+
+// IsClaudeCodeProvider returns true if using Claude Code provider.
+func (c *Config) IsClaudeCodeProvider() bool {
+	return c.Claude.Provider == "claude_code"
 }
 
 // IsFeatureEnabled checks if a feature is enabled.

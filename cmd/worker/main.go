@@ -17,6 +17,7 @@ import (
 	"github.com/anthropics/claude-orchestrator/internal/rag"
 	"github.com/anthropics/claude-orchestrator/internal/storage"
 	"github.com/anthropics/claude-orchestrator/internal/workflow"
+	"github.com/anthropics/claude-orchestrator/pkg/claude"
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/worker"
 )
@@ -94,14 +95,38 @@ func main() {
 	if apiKey := os.Getenv("ANTHROPIC_API_KEY"); apiKey != "" {
 		cfg.Claude.APIKey = apiKey
 	}
-	workingDir := getEnv("WORKING_DIR", ".")
+	workingDir := getEnv("WORKING_DIR", cfg.Claude.WorkingDir)
 
-	if cfg.Claude.APIKey == "" {
-		log.Warn("ANTHROPIC_API_KEY not set. Claude activities will fail.")
+	// Determine Claude provider
+	provider := cfg.Claude.Provider
+	if provider == "" {
+		// Auto-detect: use claude_code if no API key, otherwise use api
+		if cfg.Claude.APIKey == "" {
+			provider = "claude_code"
+		} else {
+			provider = "api"
+		}
+		cfg.Claude.Provider = provider
+	}
+
+	// Validate provider requirements
+	switch provider {
+	case "api":
+		if cfg.Claude.APIKey == "" {
+			log.Warn("ANTHROPIC_API_KEY not set but using 'api' provider. Claude activities will fail.")
+		}
+	case "claude_code":
+		log.Info("Using Claude Code provider (subscription-based)")
+	default:
+		log.Warn("Unknown Claude provider, defaulting to 'api'",
+			logging.String("provider", provider),
+		)
+		provider = "api"
 	}
 
 	// Log feature status
 	log.Info("Feature Status",
+		logging.String("claude_provider", provider),
 		logging.Bool("document_analysis", cfg.Features.DocumentAnalysis.Enabled),
 		logging.Bool("requirements_tracking", cfg.Features.RequirementsTracking.Enabled),
 		logging.Bool("framework_learning", cfg.Features.FrameworkLearning.Enabled),
@@ -149,13 +174,39 @@ func main() {
 	}
 	defer memoryStore.Close()
 
-	// Create core activities
+	// Create core activities with the configured provider
 	var claudeActivities *activity.ClaudeActivities
-	if cfg.Claude.APIKey != "" {
-		claudeActivities, err = activity.NewClaudeActivities(cfg.Claude.APIKey)
+	switch provider {
+	case "claude_code":
+		// Use Claude Code client (subscription-based)
+		claudeActivities, err = activity.NewClaudeCodeActivities(
+			claude.WithClaudeCodeWorkingDir(workingDir),
+			claude.WithClaudeCodeModel(cfg.Claude.Model),
+			claude.WithClaudeCodeTools(cfg.Claude.AllowedTools),
+		)
 		if err != nil {
-			log.Fatal("Failed to create Claude activities", logging.Error(err))
+			log.Fatal("Failed to create Claude Code activities", logging.Error(err))
 		}
+		log.Info("Created Claude Code activities",
+			logging.String("working_dir", workingDir),
+			logging.String("model", cfg.Claude.Model),
+		)
+	case "api":
+		// Use API client (credits-based)
+		if cfg.Claude.APIKey != "" {
+			claudeActivities, err = activity.NewClaudeActivities(cfg.Claude.APIKey)
+			if err != nil {
+				log.Fatal("Failed to create Claude API activities", logging.Error(err))
+			}
+			log.Info("Created Claude API activities",
+				logging.String("model", cfg.Claude.Model),
+			)
+		}
+	}
+
+	// Ensure cleanup of Claude client resources
+	if claudeActivities != nil {
+		defer claudeActivities.Close()
 	}
 
 	fsActivities := activity.NewFileSystemActivities(workingDir, []string{workingDir})
@@ -167,10 +218,19 @@ func main() {
 	var requirementsActivities *activity.RequirementsActivities
 	var frameworkActivities *activity.FrameworkActivities
 
-	if cfg.Features.DocumentAnalysis.Enabled && cfg.Claude.APIKey != "" {
-		documentActivities, err = activity.NewDocumentActivities(cfg.Claude.APIKey)
-		if err != nil {
-			log.Warn("Failed to create document activities", logging.Error(err))
+	// Document and framework activities require a Claude client
+	claudeClientAvailable := claudeActivities != nil
+
+	if cfg.Features.DocumentAnalysis.Enabled && claudeClientAvailable {
+		// Note: DocumentActivities currently only supports API client
+		// Future: refactor to use ClaudeClient interface
+		if cfg.Claude.APIKey != "" {
+			documentActivities, err = activity.NewDocumentActivities(cfg.Claude.APIKey)
+			if err != nil {
+				log.Warn("Failed to create document activities", logging.Error(err))
+			}
+		} else {
+			log.Warn("Document analysis requires API client (claude_code not yet supported)")
 		}
 	}
 
@@ -178,10 +238,16 @@ func main() {
 		requirementsActivities = activity.NewRequirementsActivities(memoryStore)
 	}
 
-	if cfg.Features.FrameworkLearning.Enabled && cfg.Claude.APIKey != "" {
-		frameworkActivities, err = activity.NewFrameworkActivities(cfg.Claude.APIKey, memoryStore)
-		if err != nil {
-			log.Warn("Failed to create framework activities", logging.Error(err))
+	if cfg.Features.FrameworkLearning.Enabled && claudeClientAvailable {
+		// Note: FrameworkActivities currently only supports API client
+		// Future: refactor to use ClaudeClient interface
+		if cfg.Claude.APIKey != "" {
+			frameworkActivities, err = activity.NewFrameworkActivities(cfg.Claude.APIKey, memoryStore)
+			if err != nil {
+				log.Warn("Failed to create framework activities", logging.Error(err))
+			}
+		} else {
+			log.Warn("Framework learning requires API client (claude_code not yet supported)")
 		}
 	}
 
@@ -359,6 +425,7 @@ func main() {
 	log.Info("Worker started",
 		logging.String("task_queue", cfg.Temporal.TaskQueue),
 		logging.String("temporal_address", cfg.Temporal.Address),
+		logging.String("claude_provider", provider),
 		logging.String("working_dir", workingDir),
 		logging.String("version", version),
 	)

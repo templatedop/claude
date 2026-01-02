@@ -12,18 +12,46 @@ import (
 	"go.temporal.io/sdk/activity"
 )
 
-// ClaudeActivities contains activities for interacting with the Claude API.
+// ClaudeActivities contains activities for interacting with Claude.
 type ClaudeActivities struct {
-	client *claude.Client
+	client claude.ClaudeClient
 }
 
-// NewClaudeActivities creates a new ClaudeActivities instance.
+// NewClaudeActivities creates a new ClaudeActivities instance using the API client.
+// This uses the Anthropic API and requires API credits.
 func NewClaudeActivities(apiKey string) (*ClaudeActivities, error) {
 	client, err := claude.NewClient(apiKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Claude client: %w", err)
 	}
 	return &ClaudeActivities{client: client}, nil
+}
+
+// NewClaudeActivitiesWithClient creates a new ClaudeActivities with a custom client.
+// This allows using either the API client or Claude Code client.
+func NewClaudeActivitiesWithClient(client claude.ClaudeClient) *ClaudeActivities {
+	return &ClaudeActivities{client: client}
+}
+
+// NewClaudeCodeActivities creates a new ClaudeActivities using Claude Code.
+// This uses your Claude subscription instead of API credits.
+// Requires Claude Code CLI to be installed and authenticated.
+func NewClaudeCodeActivities(opts ...claude.ClaudeCodeOption) (*ClaudeActivities, error) {
+	client, err := claude.NewClaudeCodeClient(opts...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Claude Code client: %w", err)
+	}
+	return &ClaudeActivities{client: client}, nil
+}
+
+// Provider returns the provider type being used.
+func (a *ClaudeActivities) Provider() claude.Provider {
+	return a.client.Provider()
+}
+
+// Close cleans up any resources.
+func (a *ClaudeActivities) Close() error {
+	return a.client.Close()
 }
 
 // CompletionRequest represents a request for a Claude completion.
@@ -47,10 +75,10 @@ type CompletionResult struct {
 	Duration     time.Duration          `json:"duration"`
 }
 
-// Complete performs a Claude API completion.
+// Complete performs a Claude completion using the configured provider.
 func (a *ClaudeActivities) Complete(ctx context.Context, req CompletionRequest) (*CompletionResult, error) {
 	logger := activity.GetLogger(ctx)
-	logger.Info("Starting Claude completion", "agent", req.AgentConfig.Name)
+	logger.Info("Starting Claude completion", "agent", req.AgentConfig.Name, "provider", a.client.Provider())
 
 	startTime := time.Now()
 
@@ -65,7 +93,7 @@ func (a *ClaudeActivities) Complete(ctx context.Context, req CompletionRequest) 
 	}
 	messages = append(messages, claude.NewTextMessage(claude.RoleUser, promptText))
 
-	// Build request
+	// Build request parameters
 	temp := req.AgentConfig.Temperature
 	if temp == 0 {
 		temp = 0.7
@@ -81,38 +109,40 @@ func (a *ClaudeActivities) Complete(ctx context.Context, req CompletionRequest) 
 		maxTokens = claude.DefaultMaxTokens
 	}
 
-	apiReq := claude.MessageRequest{
+	// Build the unified completion request
+	completionReq := claude.CompletionRequest{
+		System:      req.AgentConfig.SystemPrompt,
+		Prompt:      promptText,
 		Model:       model,
 		MaxTokens:   maxTokens,
+		Temperature: temp,
 		Messages:    messages,
-		System:      req.AgentConfig.SystemPrompt,
-		Temperature: &temp,
-		Tools:       req.Tools,
 	}
 
 	// Send heartbeat during potentially long operations
-	activity.RecordHeartbeat(ctx, "sending request to Claude API")
+	activity.RecordHeartbeat(ctx, fmt.Sprintf("sending request to Claude (%s)", a.client.Provider()))
 
-	resp, err := a.client.CreateMessage(ctx, apiReq)
+	resp, err := a.client.Complete(ctx, completionReq)
 	if err != nil {
-		logger.Error("Claude API call failed", "error", err)
-		return nil, fmt.Errorf("Claude API call failed: %w", err)
+		logger.Error("Claude completion failed", "error", err, "provider", a.client.Provider())
+		return nil, fmt.Errorf("Claude completion failed (%s): %w", a.client.Provider(), err)
 	}
 
 	duration := time.Since(startTime)
 
 	result := &CompletionResult{
-		Response:         resp.GetText(),
-		ToolCalls:        resp.GetToolUses(),
-		TokensUsed:       resp.Usage.InputTokens + resp.Usage.OutputTokens,
-		PromptTokens:     resp.Usage.InputTokens,
-		CompletionTokens: resp.Usage.OutputTokens,
+		Response:         resp.Text,
+		ToolCalls:        resp.ToolUses,
+		TokensUsed:       resp.InputTokens + resp.OutputTokens,
+		PromptTokens:     resp.InputTokens,
+		CompletionTokens: resp.OutputTokens,
 		StopReason:       resp.StopReason,
 		Model:            resp.Model,
 		Duration:         duration,
 	}
 
 	logger.Info("Claude completion finished",
+		"provider", a.client.Provider(),
 		"tokens", result.TokensUsed,
 		"duration", duration,
 		"stop_reason", resp.StopReason)

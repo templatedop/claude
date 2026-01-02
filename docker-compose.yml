@@ -159,8 +159,10 @@ services:
       dockerfile: Dockerfile
       target: worker
     environment:
-      # Claude API
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      # Claude Configuration
+      # Provider: "api" (requires ANTHROPIC_API_KEY and credits) or "claude_code" (uses subscription)
+      - CLAUDE_PROVIDER=${CLAUDE_PROVIDER:-api}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       # Temporal
       - TEMPORAL_ADDRESS=temporal:7233
       - TEMPORAL_NAMESPACE=default

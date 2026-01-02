@@ -13,9 +13,12 @@ data:
         "task_queue": {{ .Values.config.temporal.taskQueue | quote }}
       },
       "claude": {
+        "provider": {{ .Values.config.claude.provider | quote }},
         "model": {{ .Values.config.claude.model | quote }},
         "max_tokens": {{ .Values.config.claude.maxTokens }},
-        "temperature": {{ .Values.config.claude.temperature }}
+        "temperature": {{ .Values.config.claude.temperature }},
+        "working_dir": {{ .Values.config.claude.workingDir | quote }},
+        "allowed_tools": {{ .Values.config.claude.allowedTools | toJson }}
       },
       "memory": {
         "type": {{ .Values.config.memory.type | quote }}

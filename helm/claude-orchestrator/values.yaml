@@ -144,11 +144,22 @@ config:
     namespace: "default"
     taskQueue: "claude-orchestrator"
 
-  # Claude API
+  # Claude Configuration
   claude:
+    # Provider: "api" (requires API key and credits) or "claude_code" (uses subscription)
+    provider: "api"
     model: "claude-sonnet-4-20250514"
     maxTokens: 4096
     temperature: 0.7
+    # Working directory for Claude Code operations (only used with claude_code provider)
+    workingDir: "/app/workspace"
+    # Allowed tools for Claude Code (only used with claude_code provider)
+    allowedTools:
+      - "Read"
+      - "Write"
+      - "Bash"
+      - "Glob"
+      - "Grep"
 
   # Memory configuration
   memory:
