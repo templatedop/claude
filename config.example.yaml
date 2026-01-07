@@ -1,0 +1,460 @@
+# Claude Orchestrator Configuration
+# Copy this file to config.yaml and customize
+
+# Claude Provider Configuration
+claude:
+  # Provider: "api" (credits-based) or "claude_code" (subscription-based)
+  provider: "claude_code"
+
+  # API Key (required for "api" provider)
+  # Can also be set via ANTHROPIC_API_KEY environment variable
+  api_key: ""
+
+  # Model to use
+  model: "claude-sonnet-4-20250514"
+
+  # Working directory for Claude Code
+  working_dir: "."
+
+  # Allowed tools for Claude Code
+  allowed_tools:
+    - "Read"
+    - "Write"
+    - "Edit"
+    - "Bash"
+    - "Glob"
+    - "Grep"
+
+# Agent Configuration
+agents:
+  # Orchestrator Agent - Decomposes tasks and coordinates other agents
+  orchestrator:
+    name: "Orchestrator"
+    type: "orchestrator"
+    model: "claude-sonnet-4-20250514"
+    temperature: 0.7
+    max_tokens: 4096
+    system_prompt: |
+      You are an orchestrator agent responsible for breaking down complex tasks
+      into smaller, manageable subtasks and coordinating the work of other agents.
+
+      Your responsibilities:
+      - Analyze the overall task and identify key components
+      - Create subtasks with clear descriptions and dependencies
+      - Assign subtasks to appropriate agent types
+      - Monitor progress and handle failures
+    skills: []
+
+  # Planner Agent - Creates implementation plans
+  planner:
+    name: "Planner"
+    type: "planner"
+    model: "claude-sonnet-4-20250514"
+    temperature: 0.5
+    max_tokens: 8192
+    system_prompt: |
+      You are a planning agent responsible for creating detailed implementation plans.
+
+      Your responsibilities:
+      - Analyze requirements and constraints
+      - Design system architecture
+      - Create step-by-step implementation plans
+      - Identify risks and mitigation strategies
+    skills:
+      - "architecture_design"
+      - "requirements_analysis"
+      - "risk_assessment"
+
+  # Researcher Agent - Gathers information and context
+  researcher:
+    name: "Researcher"
+    type: "researcher"
+    model: "claude-sonnet-4-20250514"
+    temperature: 0.3
+    max_tokens: 8192
+    system_prompt: |
+      You are a research agent responsible for gathering information and context.
+
+      Your responsibilities:
+      - Search and analyze existing code
+      - Research best practices and patterns
+      - Gather relevant documentation
+      - Provide context to other agents
+    skills:
+      - "code_search"
+      - "documentation_lookup"
+      - "pattern_analysis"
+
+  # Coder Agent - Writes and modifies code
+  coder:
+    name: "Coder"
+    type: "coder"
+    model: "claude-sonnet-4-20250514"
+    temperature: 0.2
+    max_tokens: 16384
+    system_prompt: |
+      You are a coding agent responsible for writing high-quality code.
+
+      Your responsibilities:
+      - Write clean, maintainable code
+      - Follow coding standards and best practices
+      - Implement features according to specifications
+      - Handle edge cases and error conditions
+    skills:
+      - "code_generation"
+      - "refactoring"
+      - "bug_fixing"
+      - "test_writing"
+      - "documentation"
+
+  # Reviewer Agent - Reviews code and provides feedback
+  reviewer:
+    name: "Reviewer"
+    type: "reviewer"
+    model: "claude-sonnet-4-20250514"
+    temperature: 0.3
+    max_tokens: 8192
+    system_prompt: |
+      You are a code review agent responsible for ensuring code quality.
+
+      Your responsibilities:
+      - Review code for bugs and issues
+      - Check for security vulnerabilities
+      - Ensure adherence to coding standards
+      - Provide constructive feedback
+    skills:
+      - "code_review"
+      - "security_audit"
+      - "performance_analysis"
+      - "style_check"
+
+  # Executor Agent - Runs commands and tests
+  executor:
+    name: "Executor"
+    type: "executor"
+    model: "claude-sonnet-4-20250514"
+    temperature: 0.1
+    max_tokens: 4096
+    system_prompt: |
+      You are an executor agent responsible for running commands and tests.
+
+      Your responsibilities:
+      - Execute build commands
+      - Run test suites
+      - Deploy applications
+      - Monitor execution results
+    skills:
+      - "build"
+      - "test"
+      - "deploy"
+      - "monitoring"
+
+# Skills Configuration
+# Define reusable skills that can be assigned to agents
+skills:
+  # Code Generation Skills
+  code_generation:
+    name: "Code Generation"
+    description: "Generate code from specifications"
+    tools:
+      - "Read"
+      - "Write"
+      - "Edit"
+    prompts:
+      before: "Before generating code, analyze the requirements carefully."
+      after: "After generating code, verify it compiles and follows best practices."
+
+  refactoring:
+    name: "Code Refactoring"
+    description: "Improve existing code structure"
+    tools:
+      - "Read"
+      - "Write"
+      - "Edit"
+      - "Grep"
+    prompts:
+      before: "Analyze the existing code structure before making changes."
+      after: "Ensure refactored code maintains the same functionality."
+
+  bug_fixing:
+    name: "Bug Fixing"
+    description: "Identify and fix bugs"
+    tools:
+      - "Read"
+      - "Write"
+      - "Edit"
+      - "Bash"
+      - "Grep"
+    prompts:
+      before: "Reproduce the bug first to understand the issue."
+      after: "Write a test to prevent regression."
+
+  test_writing:
+    name: "Test Writing"
+    description: "Write unit and integration tests"
+    tools:
+      - "Read"
+      - "Write"
+      - "Edit"
+      - "Bash"
+    prompts:
+      before: "Identify all edge cases and scenarios to test."
+      after: "Run tests to verify they pass."
+
+  documentation:
+    name: "Documentation"
+    description: "Write and update documentation"
+    tools:
+      - "Read"
+      - "Write"
+      - "Edit"
+    prompts:
+      before: "Review existing documentation style."
+      after: "Ensure documentation is clear and complete."
+
+  # Research Skills
+  code_search:
+    name: "Code Search"
+    description: "Search and analyze codebase"
+    tools:
+      - "Read"
+      - "Glob"
+      - "Grep"
+    prompts:
+      before: "Define clear search criteria."
+      after: "Summarize findings concisely."
+
+  documentation_lookup:
+    name: "Documentation Lookup"
+    description: "Find relevant documentation"
+    tools:
+      - "Read"
+      - "Glob"
+      - "Grep"
+    prompts:
+      before: "Identify what documentation is needed."
+      after: "Extract key information."
+
+  pattern_analysis:
+    name: "Pattern Analysis"
+    description: "Analyze code patterns and practices"
+    tools:
+      - "Read"
+      - "Glob"
+      - "Grep"
+    prompts:
+      before: "Look for common patterns in the codebase."
+      after: "Document identified patterns."
+
+  # Review Skills
+  code_review:
+    name: "Code Review"
+    description: "Review code for quality"
+    tools:
+      - "Read"
+      - "Grep"
+    prompts:
+      before: "Understand the context and requirements."
+      after: "Provide actionable feedback."
+
+  security_audit:
+    name: "Security Audit"
+    description: "Check for security vulnerabilities"
+    tools:
+      - "Read"
+      - "Grep"
+    prompts:
+      before: "Focus on common vulnerability patterns."
+      after: "Prioritize findings by severity."
+
+  performance_analysis:
+    name: "Performance Analysis"
+    description: "Analyze code performance"
+    tools:
+      - "Read"
+      - "Grep"
+      - "Bash"
+    prompts:
+      before: "Identify performance-critical sections."
+      after: "Suggest optimizations with benchmarks."
+
+  style_check:
+    name: "Style Check"
+    description: "Check code style and formatting"
+    tools:
+      - "Read"
+      - "Bash"
+    prompts:
+      before: "Review project style guidelines."
+      after: "Report style violations with fixes."
+
+  # Planning Skills
+  architecture_design:
+    name: "Architecture Design"
+    description: "Design system architecture"
+    tools:
+      - "Read"
+      - "Glob"
+    prompts:
+      before: "Analyze existing architecture."
+      after: "Document design decisions."
+
+  requirements_analysis:
+    name: "Requirements Analysis"
+    description: "Analyze and refine requirements"
+    tools:
+      - "Read"
+    prompts:
+      before: "Identify ambiguous requirements."
+      after: "Create clear, testable requirements."
+
+  risk_assessment:
+    name: "Risk Assessment"
+    description: "Identify and assess risks"
+    tools:
+      - "Read"
+    prompts:
+      before: "Consider technical and business risks."
+      after: "Propose mitigation strategies."
+
+  # Execution Skills
+  build:
+    name: "Build"
+    description: "Build the project"
+    tools:
+      - "Bash"
+      - "Read"
+    commands:
+      - "go build ./..."
+      - "npm run build"
+      - "make build"
+
+  test:
+    name: "Test"
+    description: "Run tests"
+    tools:
+      - "Bash"
+      - "Read"
+    commands:
+      - "go test ./..."
+      - "npm test"
+      - "make test"
+
+  deploy:
+    name: "Deploy"
+    description: "Deploy the application"
+    tools:
+      - "Bash"
+      - "Read"
+    commands: []
+
+  monitoring:
+    name: "Monitoring"
+    description: "Monitor application health"
+    tools:
+      - "Bash"
+      - "Read"
+    commands: []
+
+# Temporal Configuration
+temporal:
+  address: "localhost:7233"
+  namespace: "default"
+  task_queue: "claude-orchestrator"
+
+# Workflow Configuration
+workflow:
+  # Default timeout for workflows (in minutes)
+  default_timeout: 60
+
+  # Maximum number of agents per workflow
+  max_agents: 10
+
+  # Maximum retry attempts
+  max_retries: 3
+
+  # Enable parallel task execution
+  parallel_tasks: true
+
+  # Enable code review step
+  enable_review: true
+
+  # Heartbeat timeout for activities (in minutes)
+  heartbeat_timeout: 5
+
+# Memory Configuration
+memory:
+  # Type: "memory" (in-memory) or "postgres"
+  type: "memory"
+
+  # PostgreSQL configuration (if type is "postgres")
+  postgres:
+    host: "localhost"
+    port: 5432
+    database: "claude_orchestrator"
+    user: "postgres"
+    password: ""
+    ssl_mode: "disable"
+
+# Storage Configuration
+storage:
+  enabled: false
+  # Type: "local", "s3", "minio"
+  type: "local"
+
+  local:
+    base_path: "./storage"
+    max_file_size: 104857600  # 100MB
+
+  s3:
+    region: "us-east-1"
+    endpoint: ""
+    access_key_id: ""
+    secret_access_key: ""
+    use_path_style: false
+
+# RAG Configuration
+rag:
+  enabled: false
+
+  embedding:
+    provider: "openai"
+    model: "text-embedding-3-small"
+    api_key: ""
+    endpoint: ""
+
+  chunking:
+    strategy: "recursive"
+    chunk_size: 1000
+    chunk_overlap: 200
+    min_chunk_size: 100
+    max_chunk_size: 2000
+
+# Feature Flags
+features:
+  document_analysis:
+    enabled: false
+  requirements_tracking:
+    enabled: false
+  framework_learning:
+    enabled: false
+  code_review: true
+  parallel_execution: true
+
+# Logging Configuration
+logging:
+  level: "info"
+  format: "json"
+  output: "stdout"
+  add_caller: true
+  add_stacktrace: false
+  development: false
+
+# Metrics Configuration
+metrics:
+  enabled: true
+  address: ":9090"
+  path: "/metrics"
+  namespace: "claude_orchestrator"
+  enable_go_metrics: true
+  enable_process_metrics: true

@@ -5,31 +5,54 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 // Config represents the complete orchestrator configuration.
 type Config struct {
 	// Core settings
-	Temporal      TemporalConfig      `json:"temporal"`
-	Claude        ClaudeConfig        `json:"claude"`
-	Memory        MemoryConfig        `json:"memory"`
-	Storage       StorageConfig       `json:"storage"`
-	RAG           RAGConfig           `json:"rag"`
+	Temporal TemporalConfig `json:"temporal" yaml:"temporal"`
+	Claude   ClaudeConfig   `json:"claude" yaml:"claude"`
+	Memory   MemoryConfig   `json:"memory" yaml:"memory"`
+	Storage  StorageConfig  `json:"storage" yaml:"storage"`
+	RAG      RAGConfig      `json:"rag" yaml:"rag"`
 
 	// Observability
-	Logging       LoggingConfig       `json:"logging"`
-	Metrics       MetricsConfig       `json:"metrics"`
+	Logging LoggingConfig `json:"logging" yaml:"logging"`
+	Metrics MetricsConfig `json:"metrics" yaml:"metrics"`
 
 	// Feature toggles
-	Features      FeatureConfig       `json:"features"`
+	Features FeatureConfig `json:"features" yaml:"features"`
 
 	// Agent configurations
-	Agents        AgentConfigs        `json:"agents"`
+	Agents AgentConfigs `json:"agents" yaml:"agents"`
+
+	// Skills configurations (reusable skill definitions)
+	Skills map[string]SkillConfig `json:"skills" yaml:"skills"`
 
 	// Workflow settings
-	Workflow      WorkflowConfig      `json:"workflow"`
+	Workflow WorkflowConfig `json:"workflow" yaml:"workflow"`
+}
+
+// SkillConfig defines a reusable skill that can be assigned to agents.
+type SkillConfig struct {
+	Name        string            `json:"name" yaml:"name"`
+	Description string            `json:"description" yaml:"description"`
+	Tools       []string          `json:"tools" yaml:"tools"`
+	Prompts     SkillPrompts      `json:"prompts" yaml:"prompts"`
+	Commands    []string          `json:"commands,omitempty" yaml:"commands,omitempty"`
+	Enabled     bool              `json:"enabled" yaml:"enabled"`
+	Options     map[string]string `json:"options,omitempty" yaml:"options,omitempty"`
+}
+
+// SkillPrompts contains before/after prompts for a skill.
+type SkillPrompts struct {
+	Before string `json:"before,omitempty" yaml:"before,omitempty"`
+	After  string `json:"after,omitempty" yaml:"after,omitempty"`
 }
 
 // LoggingConfig contains logging configuration.
@@ -64,9 +87,9 @@ type MetricsConfig struct {
 
 // TemporalConfig contains Temporal server configuration.
 type TemporalConfig struct {
-	Address   string `json:"address" env:"TEMPORAL_ADDRESS"`
-	Namespace string `json:"namespace" env:"TEMPORAL_NAMESPACE"`
-	TaskQueue string `json:"task_queue" env:"TASK_QUEUE"`
+	Address   string `json:"address" yaml:"address" env:"TEMPORAL_ADDRESS"`
+	Namespace string `json:"namespace" yaml:"namespace" env:"TEMPORAL_NAMESPACE"`
+	TaskQueue string `json:"task_queue" yaml:"task_queue" env:"TASK_QUEUE"`
 }
 
 // ClaudeConfig contains Claude API configuration.
@@ -74,24 +97,24 @@ type ClaudeConfig struct {
 	// Provider specifies which Claude provider to use: "api" or "claude_code"
 	// - "api": Uses Anthropic API directly (requires API credits)
 	// - "claude_code": Uses Claude Code CLI (uses your Claude subscription)
-	Provider    string  `json:"provider" env:"CLAUDE_PROVIDER"`
+	Provider    string  `json:"provider" yaml:"provider" env:"CLAUDE_PROVIDER"`
 
 	// APIKey is required when using the "api" provider
-	APIKey      string  `json:"api_key" env:"ANTHROPIC_API_KEY"`
+	APIKey      string  `json:"api_key" yaml:"api_key" env:"ANTHROPIC_API_KEY"`
 
 	// Model to use for completions
-	Model       string  `json:"model" env:"CLAUDE_MODEL"`
-	MaxTokens   int     `json:"max_tokens" env:"CLAUDE_MAX_TOKENS"`
-	Temperature float64 `json:"temperature" env:"CLAUDE_TEMPERATURE"`
+	Model       string  `json:"model" yaml:"model" env:"CLAUDE_MODEL"`
+	MaxTokens   int     `json:"max_tokens" yaml:"max_tokens" env:"CLAUDE_MAX_TOKENS"`
+	Temperature float64 `json:"temperature" yaml:"temperature" env:"CLAUDE_TEMPERATURE"`
 
 	// WorkingDir is the working directory for Claude Code operations
 	// Only used when Provider is "claude_code"
-	WorkingDir  string  `json:"working_dir" env:"WORKING_DIR"`
+	WorkingDir  string  `json:"working_dir" yaml:"working_dir" env:"WORKING_DIR"`
 
 	// AllowedTools specifies which tools Claude Code can use
 	// Only used when Provider is "claude_code"
 	// Default: ["Read", "Write", "Bash", "Glob", "Grep"]
-	AllowedTools []string `json:"allowed_tools" env:"CLAUDE_ALLOWED_TOOLS"`
+	AllowedTools []string `json:"allowed_tools" yaml:"allowed_tools" env:"CLAUDE_ALLOWED_TOOLS"`
 }
 
 // MemoryConfig contains memory store configuration.
@@ -208,21 +231,24 @@ type FrameworkLearningFeature struct {
 
 // AgentConfigs contains configuration for all agent types.
 type AgentConfigs struct {
-	Orchestrator AgentConfig `json:"orchestrator"`
-	Planner      AgentConfig `json:"planner"`
-	Researcher   AgentConfig `json:"researcher"`
-	Coder        AgentConfig `json:"coder"`
-	Reviewer     AgentConfig `json:"reviewer"`
-	Executor     AgentConfig `json:"executor"`
+	Orchestrator AgentConfig `json:"orchestrator" yaml:"orchestrator"`
+	Planner      AgentConfig `json:"planner" yaml:"planner"`
+	Researcher   AgentConfig `json:"researcher" yaml:"researcher"`
+	Coder        AgentConfig `json:"coder" yaml:"coder"`
+	Reviewer     AgentConfig `json:"reviewer" yaml:"reviewer"`
+	Executor     AgentConfig `json:"executor" yaml:"executor"`
 }
 
 // AgentConfig contains configuration for a single agent.
 type AgentConfig struct {
-	Enabled      bool    `json:"enabled"`
-	Model        string  `json:"model"`
-	MaxTokens    int     `json:"max_tokens"`
-	Temperature  float64 `json:"temperature"`
-	SystemPrompt string  `json:"system_prompt,omitempty"`
+	Name         string   `json:"name" yaml:"name"`
+	Type         string   `json:"type" yaml:"type"`
+	Enabled      bool     `json:"enabled" yaml:"enabled"`
+	Model        string   `json:"model" yaml:"model"`
+	MaxTokens    int      `json:"max_tokens" yaml:"max_tokens"`
+	Temperature  float64  `json:"temperature" yaml:"temperature"`
+	SystemPrompt string   `json:"system_prompt,omitempty" yaml:"system_prompt,omitempty"`
+	Skills       []string `json:"skills,omitempty" yaml:"skills,omitempty"` // References to skill names in Skills map
 }
 
 // WorkflowConfig contains workflow execution configuration.
@@ -383,6 +409,7 @@ func DefaultConfig() *Config {
 }
 
 // LoadConfig loads configuration from a file and environment variables.
+// Supports both JSON (.json) and YAML (.yaml, .yml) formats.
 func LoadConfig(path string) (*Config, error) {
 	config := DefaultConfig()
 
@@ -393,8 +420,23 @@ func LoadConfig(path string) (*Config, error) {
 			return nil, fmt.Errorf("failed to read config file: %w", err)
 		}
 
-		if err := json.Unmarshal(data, config); err != nil {
-			return nil, fmt.Errorf("failed to parse config file: %w", err)
+		ext := strings.ToLower(filepath.Ext(path))
+		switch ext {
+		case ".yaml", ".yml":
+			if err := yaml.Unmarshal(data, config); err != nil {
+				return nil, fmt.Errorf("failed to parse YAML config file: %w", err)
+			}
+		case ".json":
+			if err := json.Unmarshal(data, config); err != nil {
+				return nil, fmt.Errorf("failed to parse JSON config file: %w", err)
+			}
+		default:
+			// Try YAML first, then JSON
+			if err := yaml.Unmarshal(data, config); err != nil {
+				if err := json.Unmarshal(data, config); err != nil {
+					return nil, fmt.Errorf("failed to parse config file (tried YAML and JSON): %w", err)
+				}
+			}
 		}
 	}
 
@@ -404,11 +446,140 @@ func LoadConfig(path string) (*Config, error) {
 	return config, nil
 }
 
-// SaveConfig saves configuration to a file.
-func SaveConfig(config *Config, path string) error {
-	data, err := json.MarshalIndent(config, "", "  ")
+// LoadConfigWithDefaults loads config and applies default skills if none defined.
+func LoadConfigWithDefaults(path string) (*Config, error) {
+	config, err := LoadConfig(path)
 	if err != nil {
-		return fmt.Errorf("failed to marshal config: %w", err)
+		return nil, err
+	}
+
+	// Apply default skills if none defined
+	if config.Skills == nil {
+		config.Skills = DefaultSkills()
+	}
+
+	return config, nil
+}
+
+// DefaultSkills returns the default skill configurations.
+func DefaultSkills() map[string]SkillConfig {
+	return map[string]SkillConfig{
+		"code_generation": {
+			Name:        "Code Generation",
+			Description: "Generate code from specifications",
+			Tools:       []string{"Read", "Write", "Edit"},
+			Enabled:     true,
+			Prompts: SkillPrompts{
+				Before: "Analyze requirements before generating code.",
+				After:  "Verify the code compiles and follows best practices.",
+			},
+		},
+		"refactoring": {
+			Name:        "Code Refactoring",
+			Description: "Improve existing code structure",
+			Tools:       []string{"Read", "Write", "Edit", "Grep"},
+			Enabled:     true,
+			Prompts: SkillPrompts{
+				Before: "Analyze the existing code structure.",
+				After:  "Ensure refactored code maintains functionality.",
+			},
+		},
+		"bug_fixing": {
+			Name:        "Bug Fixing",
+			Description: "Identify and fix bugs",
+			Tools:       []string{"Read", "Write", "Edit", "Bash", "Grep"},
+			Enabled:     true,
+			Prompts: SkillPrompts{
+				Before: "Reproduce the bug to understand the issue.",
+				After:  "Write a test to prevent regression.",
+			},
+		},
+		"test_writing": {
+			Name:        "Test Writing",
+			Description: "Write unit and integration tests",
+			Tools:       []string{"Read", "Write", "Edit", "Bash"},
+			Enabled:     true,
+			Prompts: SkillPrompts{
+				Before: "Identify edge cases to test.",
+				After:  "Run tests to verify they pass.",
+			},
+		},
+		"code_review": {
+			Name:        "Code Review",
+			Description: "Review code for quality and issues",
+			Tools:       []string{"Read", "Grep"},
+			Enabled:     true,
+			Prompts: SkillPrompts{
+				Before: "Understand the context and requirements.",
+				After:  "Provide actionable feedback.",
+			},
+		},
+		"security_audit": {
+			Name:        "Security Audit",
+			Description: "Check for security vulnerabilities",
+			Tools:       []string{"Read", "Grep"},
+			Enabled:     true,
+			Prompts: SkillPrompts{
+				Before: "Focus on common vulnerability patterns.",
+				After:  "Prioritize findings by severity.",
+			},
+		},
+	}
+}
+
+// GetAgentSkills returns the skill configurations for an agent.
+func (c *Config) GetAgentSkills(agentType string) []SkillConfig {
+	var agentConfig *AgentConfig
+
+	switch agentType {
+	case "orchestrator":
+		agentConfig = &c.Agents.Orchestrator
+	case "planner":
+		agentConfig = &c.Agents.Planner
+	case "researcher":
+		agentConfig = &c.Agents.Researcher
+	case "coder":
+		agentConfig = &c.Agents.Coder
+	case "reviewer":
+		agentConfig = &c.Agents.Reviewer
+	case "executor":
+		agentConfig = &c.Agents.Executor
+	default:
+		return nil
+	}
+
+	if agentConfig == nil || len(agentConfig.Skills) == 0 {
+		return nil
+	}
+
+	var skills []SkillConfig
+	for _, skillName := range agentConfig.Skills {
+		if skill, ok := c.Skills[skillName]; ok && skill.Enabled {
+			skills = append(skills, skill)
+		}
+	}
+
+	return skills
+}
+
+// SaveConfig saves configuration to a file.
+// Format is determined by file extension (.yaml, .yml for YAML, .json for JSON).
+func SaveConfig(config *Config, path string) error {
+	var data []byte
+	var err error
+
+	ext := strings.ToLower(filepath.Ext(path))
+	switch ext {
+	case ".yaml", ".yml":
+		data, err = yaml.Marshal(config)
+		if err != nil {
+			return fmt.Errorf("failed to marshal config to YAML: %w", err)
+		}
+	default:
+		data, err = json.MarshalIndent(config, "", "  ")
+		if err != nil {
+			return fmt.Errorf("failed to marshal config to JSON: %w", err)
+		}
 	}
 
 	if err := os.WriteFile(path, data, 0644); err != nil {
