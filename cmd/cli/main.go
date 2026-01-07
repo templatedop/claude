@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/anthropics/claude-orchestrator/internal/domain"
@@ -20,6 +21,7 @@ var (
 	temporalAddr string
 	temporalNS   string
 	taskQueue    string
+	outputFormat string
 )
 
 func main() {
@@ -38,12 +40,14 @@ and aggregate results.`,
 	rootCmd.PersistentFlags().StringVar(&temporalAddr, "temporal-addr", getEnv("TEMPORAL_ADDRESS", "localhost:7233"), "Temporal server address")
 	rootCmd.PersistentFlags().StringVar(&temporalNS, "namespace", getEnv("TEMPORAL_NAMESPACE", "default"), "Temporal namespace")
 	rootCmd.PersistentFlags().StringVar(&taskQueue, "task-queue", getEnv("TASK_QUEUE", workflow.TaskQueueName), "Task queue name")
+	rootCmd.PersistentFlags().StringVarP(&outputFormat, "output", "o", "text", "Output format: text, json")
 
 	// Add commands
 	rootCmd.AddCommand(runCmd())
 	rootCmd.AddCommand(statusCmd())
 	rootCmd.AddCommand(cancelCmd())
 	rootCmd.AddCommand(listCmd())
+	rootCmd.AddCommand(configCmd())
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -340,4 +344,163 @@ func repeatChar(c rune, n int) string {
 		result[i] = c
 	}
 	return string(result)
+}
+
+func configCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "config",
+		Short: "Show or manage configuration",
+		Long: `Display current configuration settings including:
+- Claude provider (api or claude_code)
+- Temporal connection settings
+- Environment variable status`,
+	}
+
+	cmd.AddCommand(configShowCmd())
+	cmd.AddCommand(configSetCmd())
+
+	return cmd
+}
+
+func configShowCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "show",
+		Short: "Show current configuration",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			config := getConfigInfo()
+
+			if outputFormat == "json" {
+				return outputJSON(config)
+			}
+
+			fmt.Println("Claude Orchestrator Configuration")
+			fmt.Println(repeatChar('=', 40))
+			fmt.Println()
+
+			fmt.Println("Claude Provider:")
+			fmt.Printf("  CLAUDE_PROVIDER:    %s\n", valueOrDefault(config["claude_provider"], "(not set, defaults to auto-detect)"))
+			fmt.Printf("  ANTHROPIC_API_KEY:  %s\n", maskValue(config["api_key_status"]))
+			fmt.Println()
+
+			fmt.Println("Temporal Settings:")
+			fmt.Printf("  Address:   %s\n", config["temporal_address"])
+			fmt.Printf("  Namespace: %s\n", config["temporal_namespace"])
+			fmt.Printf("  TaskQueue: %s\n", config["task_queue"])
+			fmt.Println()
+
+			fmt.Println("Provider Behavior:")
+			if config["api_key_status"] == "set" {
+				if config["claude_provider"] == "claude_code" {
+					fmt.Println("  → Using Claude Code CLI (subscription-based)")
+				} else {
+					fmt.Println("  → Using Claude API (credits-based)")
+				}
+			} else {
+				if config["claude_provider"] == "api" {
+					fmt.Println("  ⚠ API provider selected but ANTHROPIC_API_KEY not set")
+				} else {
+					fmt.Println("  → Using Claude Code CLI (subscription-based)")
+				}
+			}
+			fmt.Println()
+
+			fmt.Println("To change provider:")
+			fmt.Println("  export CLAUDE_PROVIDER=api          # Use API (requires ANTHROPIC_API_KEY)")
+			fmt.Println("  export CLAUDE_PROVIDER=claude_code  # Use Claude Code CLI")
+
+			return nil
+		},
+	}
+}
+
+func configSetCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "set [provider]",
+		Short: "Show how to set configuration",
+		Long: `Show instructions for setting the Claude provider.
+
+Valid providers:
+  api         - Use Claude API (requires ANTHROPIC_API_KEY)
+  claude_code - Use Claude Code CLI (requires 'claude login')`,
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				fmt.Println("Usage: claude-orchestrator config set <provider>")
+				fmt.Println()
+				fmt.Println("Valid providers:")
+				fmt.Println("  api         - Use Claude API (credits-based)")
+				fmt.Println("  claude_code - Use Claude Code CLI (subscription-based)")
+				fmt.Println()
+				fmt.Println("Example:")
+				fmt.Println("  # Set provider to Claude Code")
+				fmt.Println("  export CLAUDE_PROVIDER=claude_code")
+				fmt.Println()
+				fmt.Println("  # Set provider to API")
+				fmt.Println("  export CLAUDE_PROVIDER=api")
+				fmt.Println("  export ANTHROPIC_API_KEY=your-api-key")
+				return nil
+			}
+
+			provider := strings.ToLower(args[0])
+			switch provider {
+			case "api":
+				fmt.Println("To use Claude API provider:")
+				fmt.Println()
+				fmt.Println("  export CLAUDE_PROVIDER=api")
+				fmt.Println("  export ANTHROPIC_API_KEY=your-api-key")
+				fmt.Println()
+				fmt.Println("Then restart the worker.")
+			case "claude_code", "claudecode", "cli":
+				fmt.Println("To use Claude Code CLI provider:")
+				fmt.Println()
+				fmt.Println("  1. Install Claude Code: npm install -g @anthropic-ai/claude-code")
+				fmt.Println("  2. Authenticate: claude login")
+				fmt.Println("  3. Set provider: export CLAUDE_PROVIDER=claude_code")
+				fmt.Println()
+				fmt.Println("Then restart the worker.")
+			default:
+				return fmt.Errorf("unknown provider: %s (valid: api, claude_code)", provider)
+			}
+
+			return nil
+		},
+	}
+}
+
+func getConfigInfo() map[string]string {
+	provider := os.Getenv("CLAUDE_PROVIDER")
+	apiKey := os.Getenv("ANTHROPIC_API_KEY")
+
+	apiKeyStatus := "not set"
+	if apiKey != "" {
+		apiKeyStatus = "set"
+	}
+
+	return map[string]string{
+		"claude_provider":    provider,
+		"api_key_status":     apiKeyStatus,
+		"temporal_address":   temporalAddr,
+		"temporal_namespace": temporalNS,
+		"task_queue":         taskQueue,
+	}
+}
+
+func valueOrDefault(value, defaultVal string) string {
+	if value == "" {
+		return defaultVal
+	}
+	return value
+}
+
+func maskValue(status string) string {
+	if status == "set" {
+		return "****** (set)"
+	}
+	return "(not set)"
+}
+
+func outputJSON(data interface{}) error {
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	return enc.Encode(data)
 }
