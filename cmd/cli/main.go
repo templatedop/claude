@@ -10,7 +10,9 @@ import (
 	"time"
 
 	"github.com/anthropics/claude-orchestrator/internal/domain"
+	"github.com/anthropics/claude-orchestrator/internal/tui"
 	"github.com/anthropics/claude-orchestrator/internal/workflow"
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 	"go.temporal.io/api/workflowservice/v1"
@@ -22,6 +24,7 @@ var (
 	temporalNS   string
 	taskQueue    string
 	outputFormat string
+	configPath   string
 )
 
 func main() {
@@ -37,6 +40,7 @@ and aggregate results.`,
 	}
 
 	// Global flags
+	rootCmd.PersistentFlags().StringVar(&configPath, "config", getEnv("CONFIG_PATH", ""), "Path to configuration file (YAML or JSON)")
 	rootCmd.PersistentFlags().StringVar(&temporalAddr, "temporal-addr", getEnv("TEMPORAL_ADDRESS", "localhost:7233"), "Temporal server address")
 	rootCmd.PersistentFlags().StringVar(&temporalNS, "namespace", getEnv("TEMPORAL_NAMESPACE", "default"), "Temporal namespace")
 	rootCmd.PersistentFlags().StringVar(&taskQueue, "task-queue", getEnv("TASK_QUEUE", workflow.TaskQueueName), "Task queue name")
@@ -48,6 +52,7 @@ and aggregate results.`,
 	rootCmd.AddCommand(cancelCmd())
 	rootCmd.AddCommand(listCmd())
 	rootCmd.AddCommand(configCmd())
+	rootCmd.AddCommand(tuiCmd())
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -503,4 +508,36 @@ func outputJSON(data interface{}) error {
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	return enc.Encode(data)
+}
+
+func tuiCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "tui",
+		Short: "Launch the interactive terminal UI",
+		Long: `Launch an interactive Bubble Tea-based terminal UI for managing
+orchestration workflows. The TUI provides:
+
+- Real-time workflow status monitoring
+- Task creation and management
+- Agent activity visualization
+- Log viewing and filtering`,
+		Example: `  # Launch TUI with default config
+  claude-orchestrator tui
+
+  # Launch TUI with Temporal settings
+  claude-orchestrator tui --temporal-addr localhost:7233`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			// Create and run the TUI
+			model := tui.NewModel()
+			p := tea.NewProgram(model, tea.WithAltScreen())
+
+			if _, err := p.Run(); err != nil {
+				return fmt.Errorf("TUI error: %w", err)
+			}
+
+			return nil
+		},
+	}
+
+	return cmd
 }

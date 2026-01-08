@@ -1,0 +1,857 @@
+# ============================================================================
+# Claude Orchestrator Configuration Reference
+# ============================================================================
+# This file documents ALL available configuration options.
+# Copy this file and modify values as needed for your deployment.
+#
+# Configuration can be overridden via:
+# 1. YAML/JSON config file (--config flag)
+# 2. Environment variables (see env: tags for each option)
+# 3. CLI flags (where available)
+#
+# Priority: CLI flags > Environment variables > Config file > Defaults
+# ============================================================================
+
+# ----------------------------------------------------------------------------
+# TEMPORAL CONFIGURATION
+# ----------------------------------------------------------------------------
+# Temporal.io is used for workflow orchestration, ensuring durability,
+# retries, and distributed task coordination.
+temporal:
+  # Address of the Temporal server
+  # Format: host:port
+  # Default: localhost:7233
+  # Env: TEMPORAL_ADDRESS
+  address: "localhost:7233"
+
+  # Temporal namespace to use
+  # Namespaces provide isolation between different applications/environments
+  # Default: default
+  # Env: TEMPORAL_NAMESPACE
+  namespace: "default"
+
+  # Task queue name for workflow and activity execution
+  # Workers listen on this queue for tasks to execute
+  # Default: claude-orchestrator
+  # Env: TASK_QUEUE
+  task_queue: "claude-orchestrator"
+
+# ----------------------------------------------------------------------------
+# CLAUDE AI CONFIGURATION
+# ----------------------------------------------------------------------------
+# Settings for connecting to Claude AI (either via API or Claude Code CLI)
+claude:
+  # Provider determines how to connect to Claude
+  # Options:
+  #   - "api": Use Anthropic API directly (requires API credits)
+  #   - "claude_code": Use Claude Code CLI (uses your Claude subscription)
+  # Default: api
+  # Env: CLAUDE_PROVIDER
+  provider: "api"
+
+  # API key for Anthropic API
+  # Required when provider is "api"
+  # Get your key at: https://console.anthropic.com/
+  # Default: (empty)
+  # Env: ANTHROPIC_API_KEY
+  api_key: ""
+
+  # Claude model to use for completions
+  # Available models: claude-sonnet-4-20250514, claude-opus-4-20250514, etc.
+  # Default: claude-sonnet-4-20250514
+  # Env: CLAUDE_MODEL
+  model: "claude-sonnet-4-20250514"
+
+  # Maximum number of tokens in the response
+  # Higher values allow longer responses but cost more
+  # Default: 4096
+  # Env: CLAUDE_MAX_TOKENS
+  max_tokens: 4096
+
+  # Temperature for response generation
+  # 0.0 = deterministic, 1.0 = creative
+  # Recommended: 0.1-0.3 for code, 0.5-0.7 for creative tasks
+  # Default: 0.7
+  # Env: CLAUDE_TEMPERATURE
+  temperature: 0.7
+
+  # Working directory for Claude Code operations
+  # Only used when provider is "claude_code"
+  # Default: "." (current directory)
+  # Env: WORKING_DIR
+  working_dir: "."
+
+  # Allowed tools for Claude Code CLI
+  # Only used when provider is "claude_code"
+  # Available tools: Read, Write, Edit, Bash, Glob, Grep, etc.
+  # Default: ["Read", "Write", "Bash", "Glob", "Grep"]
+  # Env: CLAUDE_ALLOWED_TOOLS (comma-separated)
+  allowed_tools:
+    - "Read"
+    - "Write"
+    - "Bash"
+    - "Glob"
+    - "Grep"
+
+# ----------------------------------------------------------------------------
+# MEMORY CONFIGURATION
+# ----------------------------------------------------------------------------
+# Memory store for agent state and conversation history
+memory:
+  # Type of memory backend
+  # Options:
+  #   - "inmemory": In-memory storage (lost on restart)
+  #   - "postgres": PostgreSQL for persistent storage
+  # Default: inmemory
+  # Env: MEMORY_TYPE
+  type: "inmemory"
+
+  # PostgreSQL configuration (when type is "postgres")
+  postgres:
+    # Database host
+    # Default: localhost
+    # Env: POSTGRES_HOST
+    host: "localhost"
+
+    # Database port
+    # Default: 5432
+    # Env: POSTGRES_PORT
+    port: 5432
+
+    # Database name
+    # Default: claude_orchestrator
+    # Env: POSTGRES_DB
+    database: "claude_orchestrator"
+
+    # Database user
+    # Default: postgres
+    # Env: POSTGRES_USER
+    user: "postgres"
+
+    # Database password
+    # Default: (empty)
+    # Env: POSTGRES_PASSWORD
+    password: ""
+
+    # SSL mode for connection
+    # Options: disable, require, verify-ca, verify-full
+    # Default: disable
+    # Env: POSTGRES_SSLMODE
+    ssl_mode: "disable"
+
+# ----------------------------------------------------------------------------
+# STORAGE CONFIGURATION
+# ----------------------------------------------------------------------------
+# File storage for artifacts, documents, and generated files
+storage:
+  # Enable file storage feature
+  # Default: true
+  # Env: FEATURE_STORAGE
+  enabled: true
+
+  # Storage backend type
+  # Options:
+  #   - "local": Local filesystem
+  #   - "s3": Amazon S3 or compatible (MinIO, etc.)
+  #   - "gcs": Google Cloud Storage
+  #   - "azure": Azure Blob Storage
+  # Default: local
+  # Env: STORAGE_TYPE
+  type: "local"
+
+  # Local storage configuration
+  local:
+    # Base path for storing files
+    # Default: ./storage
+    # Env: STORAGE_LOCAL_PATH
+    base_path: "./storage"
+
+    # Base URL for accessing stored files (if serving over HTTP)
+    # Default: (empty)
+    # Env: STORAGE_LOCAL_URL
+    base_url: ""
+
+    # Maximum file size in bytes
+    # Default: 104857600 (100MB)
+    max_file_size: 104857600
+
+  # S3/MinIO storage configuration
+  s3:
+    # AWS region
+    # Default: us-east-1
+    # Env: AWS_REGION
+    region: "us-east-1"
+
+    # S3 endpoint URL (for MinIO or S3-compatible services)
+    # Leave empty for AWS S3
+    # Example for MinIO: http://localhost:9000
+    # Default: (empty)
+    # Env: S3_ENDPOINT
+    endpoint: ""
+
+    # AWS access key ID
+    # Default: (empty)
+    # Env: AWS_ACCESS_KEY_ID
+    access_key_id: ""
+
+    # AWS secret access key
+    # Default: (empty)
+    # Env: AWS_SECRET_ACCESS_KEY
+    secret_access_key: ""
+
+    # S3 bucket name
+    # Default: (empty)
+    # Env: S3_BUCKET
+    bucket: ""
+
+    # Use path-style URLs (required for MinIO)
+    # Default: false
+    # Env: S3_PATH_STYLE
+    use_path_style: false
+
+# ----------------------------------------------------------------------------
+# RAG (RETRIEVAL-AUGMENTED GENERATION) CONFIGURATION
+# ----------------------------------------------------------------------------
+# Vector search and document embedding for enhanced context retrieval
+rag:
+  # Enable RAG feature
+  # Default: true
+  # Env: FEATURE_RAG
+  enabled: true
+
+  # Default namespace for document storage
+  # Useful for multi-tenant or project-based separation
+  # Default: default
+  default_namespace: "default"
+
+  # Embedding model configuration
+  embedding:
+    # Embedding provider
+    # Options:
+    #   - "openai": OpenAI embeddings (text-embedding-3-small, etc.)
+    #   - "cohere": Cohere embeddings
+    #   - "local": Local/self-hosted model
+    # Default: openai
+    # Env: EMBEDDING_PROVIDER
+    provider: "openai"
+
+    # Embedding model name
+    # For OpenAI: text-embedding-3-small, text-embedding-3-large, text-embedding-ada-002
+    # Default: text-embedding-3-small
+    # Env: EMBEDDING_MODEL
+    model: "text-embedding-3-small"
+
+    # API key for embedding provider
+    # Default: (empty)
+    # Env: EMBEDDING_API_KEY
+    api_key: ""
+
+    # Endpoint URL for local/custom embedding service
+    # Default: (empty)
+    # Env: EMBEDDING_ENDPOINT
+    endpoint: ""
+
+    # Vector dimensions (must match model output)
+    # text-embedding-3-small: 1536
+    # text-embedding-3-large: 3072
+    # Default: 1536
+    dimensions: 1536
+
+    # Batch size for embedding requests
+    # Higher values are more efficient but use more memory
+    # Default: 100
+    batch_size: 100
+
+  # Document chunking configuration
+  chunking:
+    # Chunking strategy
+    # Options:
+    #   - "fixed": Fixed-size chunks
+    #   - "sentence": Split on sentence boundaries
+    #   - "paragraph": Split on paragraph boundaries
+    #   - "semantic": Use semantic similarity
+    #   - "code": Code-aware chunking (respects functions/classes)
+    #   - "markdown": Markdown-aware chunking (respects headers)
+    # Default: sentence
+    strategy: "sentence"
+
+    # Target chunk size in characters
+    # Default: 1000
+    chunk_size: 1000
+
+    # Overlap between chunks in characters
+    # Helps maintain context across chunk boundaries
+    # Default: 200
+    chunk_overlap: 200
+
+    # Minimum chunk size (smaller chunks are merged)
+    # Default: 100
+    min_chunk_size: 100
+
+    # Maximum chunk size (larger chunks are split)
+    # Default: 2000
+    max_chunk_size: 2000
+
+# ----------------------------------------------------------------------------
+# MCP (MODEL CONTEXT PROTOCOL) CONFIGURATION
+# ----------------------------------------------------------------------------
+# MCP servers provide additional tools and context to AI agents
+mcp:
+  # Enable MCP server functionality
+  # Default: false
+  enabled: false
+
+  # GitLab MCP server configuration
+  # Provides tools for interacting with GitLab (issues, MRs, pipelines)
+  gitlab:
+    # Enable GitLab MCP server
+    # Default: false
+    enabled: false
+
+    # GitLab instance URL
+    # Default: https://gitlab.com
+    # Env: GITLAB_URL
+    base_url: "https://gitlab.com"
+
+    # GitLab personal access token
+    # Required scopes: api, read_repository, write_repository
+    # Default: (empty)
+    # Env: GITLAB_TOKEN
+    token: ""
+
+    # Default project (owner/repo format)
+    # Used when project is not specified in tool calls
+    # Default: (empty)
+    # Env: GITLAB_PROJECT
+    default_project: ""
+
+  # Database MCP server configuration
+  # Provides tools for querying and exploring databases
+  database:
+    # Enable database MCP server
+    # Default: false
+    enabled: false
+
+    # Database driver
+    # Options: postgres, mysql, sqlite
+    # Default: postgres
+    driver: "postgres"
+
+    # Database host
+    # Default: localhost
+    # Env: DB_HOST
+    host: "localhost"
+
+    # Database port
+    # Default: 5432
+    # Env: DB_PORT
+    port: 5432
+
+    # Database user
+    # Default: (empty)
+    # Env: DB_USER
+    user: ""
+
+    # Database password
+    # Default: (empty)
+    # Env: DB_PASSWORD
+    password: ""
+
+    # Database name
+    # Default: (empty)
+    # Env: DB_NAME
+    database: ""
+
+    # SSL mode for connection
+    # Options: disable, require, verify-ca, verify-full
+    # Default: disable
+    ssl_mode: "disable"
+
+    # Maximum rows to return from queries
+    # Prevents accidental large result sets
+    # Default: 100
+    max_rows: 100
+
+    # Enable read-only mode (prevents INSERT/UPDATE/DELETE)
+    # Recommended for safety
+    # Default: true
+    read_only: true
+
+    # List of allowed tables (empty = all tables)
+    # Restricts which tables can be queried
+    # Default: []
+    allowed_tables: []
+
+# ----------------------------------------------------------------------------
+# LSP (LANGUAGE SERVER PROTOCOL) CONFIGURATION
+# ----------------------------------------------------------------------------
+# LSP server provides code intelligence features to AI agents
+lsp:
+  # Enable LSP server
+  # Default: false
+  enabled: false
+
+  # LSP server address (for TCP mode)
+  # Default: localhost:9999
+  address: "localhost:9999"
+
+  # Languages to enable handlers for
+  # Currently supported: go
+  # Default: ["go"]
+  languages:
+    - "go"
+
+  # LSP features to enable
+  features:
+    # Hover information (documentation on hover)
+    # Default: true
+    hover: true
+
+    # Code completion suggestions
+    # Default: true
+    completion: true
+
+    # Go to definition
+    # Default: true
+    definition: true
+
+    # Find all references
+    # Default: true
+    references: true
+
+    # Document/workspace symbols
+    # Default: true
+    symbols: true
+
+    # Diagnostic messages (errors, warnings)
+    # Default: true
+    diagnostics: true
+
+# ----------------------------------------------------------------------------
+# LOGGING CONFIGURATION
+# ----------------------------------------------------------------------------
+# Application logging settings
+logging:
+  # Log level
+  # Options: debug, info, warn, error
+  # Default: info
+  # Env: LOG_LEVEL
+  level: "info"
+
+  # Log format
+  # Options:
+  #   - "json": Structured JSON logs (recommended for production)
+  #   - "console": Human-readable colored output
+  #   - "text": Plain text format
+  # Default: json
+  # Env: LOG_FORMAT
+  format: "json"
+
+  # Log output destination
+  # Options:
+  #   - "stdout": Standard output
+  #   - "stderr": Standard error
+  #   - "/path/to/file.log": File path
+  # Default: stdout
+  # Env: LOG_OUTPUT
+  output: "stdout"
+
+  # Add caller information (file:line) to log entries
+  # Useful for debugging but adds overhead
+  # Default: true
+  add_caller: true
+
+  # Add stack traces to error logs
+  # Default: false
+  add_stacktrace: false
+
+  # Enable development mode (more verbose, panics on DPanic)
+  # Default: false
+  # Env: LOG_DEVELOPMENT
+  development: false
+
+  # Log sampling configuration (for high-volume logging)
+  sampling:
+    # Enable log sampling
+    # Default: false
+    enabled: false
+
+    # Log first N entries per second at each level
+    # Default: 100
+    initial: 100
+
+    # After initial, log every Mth entry
+    # Default: 100
+    thereafter: 100
+
+# ----------------------------------------------------------------------------
+# METRICS CONFIGURATION
+# ----------------------------------------------------------------------------
+# Prometheus metrics endpoint configuration
+metrics:
+  # Enable metrics endpoint
+  # Default: true
+  # Env: METRICS_ENABLED
+  enabled: true
+
+  # Address to serve metrics on
+  # Default: :9090
+  # Env: METRICS_ADDRESS
+  address: ":9090"
+
+  # Path for metrics endpoint
+  # Default: /metrics
+  # Env: METRICS_PATH
+  path: "/metrics"
+
+  # Prometheus namespace for metrics
+  # Prefix for all metric names
+  # Default: claude_orchestrator
+  namespace: "claude_orchestrator"
+
+  # Enable Go runtime metrics
+  # Default: true
+  enable_go_metrics: true
+
+  # Enable process metrics (CPU, memory, etc.)
+  # Default: true
+  enable_process_metrics: true
+
+  # Custom histogram buckets for latency metrics
+  # Default: Prometheus default buckets
+  buckets: []
+
+# ----------------------------------------------------------------------------
+# FEATURE TOGGLES
+# ----------------------------------------------------------------------------
+# Enable/disable specific application features
+features:
+  # Document analysis feature
+  # Analyzes documents to extract requirements, features, etc.
+  document_analysis:
+    # Enable document analysis
+    # Default: true
+    # Env: FEATURE_DOC_ANALYSIS
+    enabled: true
+
+    # Supported file formats for analysis
+    # Default: [".md", ".txt", ".rst", ".adoc", ".pdf", ".docx"]
+    supported_formats:
+      - ".md"
+      - ".txt"
+      - ".rst"
+      - ".adoc"
+      - ".pdf"
+      - ".docx"
+
+    # Maximum file size in MB
+    # Default: 10
+    max_file_size_mb: 10
+
+    # Items to extract from documents
+    # Options: requirements, features, constraints, dependencies, todos
+    # Default: ["requirements", "features", "constraints", "dependencies"]
+    extract_items:
+      - "requirements"
+      - "features"
+      - "constraints"
+      - "dependencies"
+
+  # Requirements tracking feature
+  # Tracks implementation status of requirements
+  requirements_tracking:
+    # Enable requirements tracking
+    # Default: true
+    # Env: FEATURE_REQ_TRACKING
+    enabled: true
+
+    # Auto-detect requirements from documents
+    # Default: true
+    auto_detect: true
+
+    # Track implementation status
+    # Default: true
+    track_implementation: true
+
+    # Track test coverage for requirements
+    # Default: true
+    track_tests: true
+
+    # History retention in days
+    # Default: 90
+    history_retention_days: 90
+
+  # Framework learning feature
+  # Learns patterns from project frameworks and libraries
+  framework_learning:
+    # Enable framework learning
+    # Default: true
+    # Env: FEATURE_FRAMEWORK_LEARNING
+    enabled: true
+
+    # Auto-learn from project dependencies
+    # Default: true
+    auto_learn: true
+
+    # Maximum source files to analyze
+    # Default: 50
+    max_source_files: 50
+
+    # Supported programming languages
+    # Default: ["go", "javascript", "typescript", "python", "java", "rust"]
+    supported_languages:
+      - "go"
+      - "javascript"
+      - "typescript"
+      - "python"
+      - "java"
+      - "rust"
+
+    # Cache expiry in days
+    # Default: 30
+    cache_expiry_days: 30
+
+  # Enable code review agent
+  # Default: true
+  # Env: FEATURE_CODE_REVIEW
+  code_review: true
+
+  # Enable parallel task execution
+  # When true, independent tasks run concurrently
+  # Default: true
+  # Env: FEATURE_PARALLEL_EXECUTION
+  parallel_execution: true
+
+# ----------------------------------------------------------------------------
+# AGENT CONFIGURATIONS
+# ----------------------------------------------------------------------------
+# Settings for individual agent types in the orchestration system
+agents:
+  # Orchestrator agent (Queen) - coordinates all other agents
+  orchestrator:
+    # Agent name (for logging/identification)
+    name: "Orchestrator"
+
+    # Agent type identifier
+    type: "orchestrator"
+
+    # Enable this agent
+    # Default: true
+    enabled: true
+
+    # Model to use (can override global claude.model)
+    # Default: claude-sonnet-4-20250514
+    model: "claude-sonnet-4-20250514"
+
+    # Maximum tokens for responses
+    # Default: 4096
+    max_tokens: 4096
+
+    # Temperature for generation
+    # Lower = more deterministic (good for orchestration)
+    # Default: 0.3
+    temperature: 0.3
+
+    # Custom system prompt (optional)
+    # Default: uses built-in prompt
+    system_prompt: ""
+
+    # Skills assigned to this agent
+    # References skill names from the 'skills' section
+    # Default: []
+    skills: []
+
+  # Planner agent - creates implementation plans
+  planner:
+    name: "Planner"
+    type: "planner"
+    enabled: true
+    model: "claude-sonnet-4-20250514"
+    max_tokens: 4096
+    # Slightly higher temperature for creative planning
+    temperature: 0.4
+    system_prompt: ""
+    skills: []
+
+  # Researcher agent - gathers information and context
+  researcher:
+    name: "Researcher"
+    type: "researcher"
+    enabled: true
+    model: "claude-sonnet-4-20250514"
+    max_tokens: 4096
+    # Medium temperature for balanced exploration
+    temperature: 0.5
+    system_prompt: ""
+    skills: []
+
+  # Coder agent - writes and modifies code
+  coder:
+    name: "Coder"
+    type: "coder"
+    enabled: true
+    model: "claude-sonnet-4-20250514"
+    # Higher token limit for code generation
+    max_tokens: 8192
+    # Low temperature for precise code generation
+    temperature: 0.2
+    system_prompt: ""
+    skills:
+      - "code_generation"
+      - "refactoring"
+      - "bug_fixing"
+
+  # Reviewer agent - reviews code quality
+  reviewer:
+    name: "Reviewer"
+    type: "reviewer"
+    enabled: true
+    model: "claude-sonnet-4-20250514"
+    max_tokens: 4096
+    # Low temperature for consistent reviews
+    temperature: 0.3
+    system_prompt: ""
+    skills:
+      - "code_review"
+      - "security_audit"
+
+  # Executor agent - runs commands and tests
+  executor:
+    name: "Executor"
+    type: "executor"
+    enabled: true
+    model: "claude-sonnet-4-20250514"
+    # Lower token limit (mostly running commands)
+    max_tokens: 2048
+    # Very low temperature for predictable execution
+    temperature: 0.1
+    system_prompt: ""
+    skills:
+      - "test_writing"
+
+# ----------------------------------------------------------------------------
+# SKILLS CONFIGURATION
+# ----------------------------------------------------------------------------
+# Reusable skill definitions that can be assigned to agents
+# Skills define tools, prompts, and options for specific capabilities
+skills:
+  # Code generation skill
+  code_generation:
+    name: "Code Generation"
+    description: "Generate code from specifications"
+    # Tools this skill can use
+    tools:
+      - "Read"
+      - "Write"
+      - "Edit"
+    # Prompt additions
+    prompts:
+      # Added before the main task
+      before: "Analyze requirements before generating code."
+      # Added after the main task
+      after: "Verify the code compiles and follows best practices."
+    # Enable/disable this skill
+    enabled: true
+    # Custom options (skill-specific)
+    options: {}
+
+  # Code refactoring skill
+  refactoring:
+    name: "Code Refactoring"
+    description: "Improve existing code structure"
+    tools:
+      - "Read"
+      - "Write"
+      - "Edit"
+      - "Grep"
+    prompts:
+      before: "Analyze the existing code structure."
+      after: "Ensure refactored code maintains functionality."
+    enabled: true
+    options: {}
+
+  # Bug fixing skill
+  bug_fixing:
+    name: "Bug Fixing"
+    description: "Identify and fix bugs"
+    tools:
+      - "Read"
+      - "Write"
+      - "Edit"
+      - "Bash"
+      - "Grep"
+    prompts:
+      before: "Reproduce the bug to understand the issue."
+      after: "Write a test to prevent regression."
+    enabled: true
+    options: {}
+
+  # Test writing skill
+  test_writing:
+    name: "Test Writing"
+    description: "Write unit and integration tests"
+    tools:
+      - "Read"
+      - "Write"
+      - "Edit"
+      - "Bash"
+    prompts:
+      before: "Identify edge cases to test."
+      after: "Run tests to verify they pass."
+    enabled: true
+    options: {}
+
+  # Code review skill
+  code_review:
+    name: "Code Review"
+    description: "Review code for quality and issues"
+    tools:
+      - "Read"
+      - "Grep"
+    prompts:
+      before: "Understand the context and requirements."
+      after: "Provide actionable feedback."
+    enabled: true
+    options: {}
+
+  # Security audit skill
+  security_audit:
+    name: "Security Audit"
+    description: "Check for security vulnerabilities"
+    tools:
+      - "Read"
+      - "Grep"
+    prompts:
+      before: "Focus on common vulnerability patterns."
+      after: "Prioritize findings by severity."
+    enabled: true
+    options: {}
+
+# ----------------------------------------------------------------------------
+# WORKFLOW CONFIGURATION
+# ----------------------------------------------------------------------------
+# Settings for workflow execution behavior
+workflow:
+  # Default timeout for workflows
+  # Format: Go duration (e.g., "60m", "1h", "30m")
+  # Default: 60m
+  default_timeout: "60m"
+
+  # Maximum number of concurrent agents
+  # Default: 10
+  max_agents: 10
+
+  # Maximum retry attempts for failed activities
+  # Default: 3
+  max_retries: 3
+
+  # Interval between retry attempts
+  # Format: Go duration
+  # Default: 1s
+  retry_interval: "1s"
+
+  # Heartbeat interval for long-running activities
+  # Activities must heartbeat within this interval or be considered dead
+  # Format: Go duration
+  # Default: 2m
+  heartbeat_interval: "2m"
