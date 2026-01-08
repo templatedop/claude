@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/anthropics/claude-orchestrator/internal/config"
 	"github.com/anthropics/claude-orchestrator/internal/domain"
 	"github.com/anthropics/claude-orchestrator/internal/tui"
 	"github.com/anthropics/claude-orchestrator/internal/workflow"
@@ -511,6 +512,8 @@ func outputJSON(data interface{}) error {
 }
 
 func tuiCmd() *cobra.Command {
+	var cfgPath string
+
 	cmd := &cobra.Command{
 		Use:   "tui",
 		Short: "Launch the interactive terminal UI",
@@ -519,16 +522,31 @@ orchestration workflows. The TUI provides:
 
 - Real-time workflow status monitoring
 - Task creation and management
-- Agent activity visualization
-- Log viewing and filtering`,
+- Prompt entry for new workflows
+- Configuration loading and viewing`,
 		Example: `  # Launch TUI with default config
   claude-orchestrator tui
+
+  # Launch TUI with custom config
+  claude-orchestrator tui --config ./config.yaml
 
   # Launch TUI with Temporal settings
   claude-orchestrator tui --temporal-addr localhost:7233`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Build TUI options
+			var opts []tui.Option
+
+			// Load config if path provided
+			if cfgPath != "" {
+				cfg, err := config.LoadConfig(cfgPath)
+				if err != nil {
+					return fmt.Errorf("failed to load config: %w", err)
+				}
+				opts = append(opts, tui.WithConfig(cfg), tui.WithConfigPath(cfgPath))
+			}
+
 			// Create and run the TUI
-			model := tui.NewModel()
+			model := tui.NewModel(opts...)
 			p := tea.NewProgram(model, tea.WithAltScreen())
 
 			if _, err := p.Run(); err != nil {
@@ -538,6 +556,8 @@ orchestration workflows. The TUI provides:
 			return nil
 		},
 	}
+
+	cmd.Flags().StringVarP(&cfgPath, "config", "c", "", "Path to configuration file (YAML or JSON)")
 
 	return cmd
 }

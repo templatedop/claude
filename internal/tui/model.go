@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/anthropics/claude-orchestrator/internal/config"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -20,6 +21,15 @@ const (
 	ViewTasks
 	ViewConfig
 	ViewHelp
+)
+
+// InputMode represents the current input state.
+type InputMode int
+
+const (
+	InputNone InputMode = iota
+	InputPrompt
+	InputConfigPath
 )
 
 // Task represents a task in the todo list.
@@ -45,10 +55,16 @@ type Workflow struct {
 	TokensUsed int
 }
 
+// SubmitHandler is called when a prompt is submitted.
+type SubmitHandler func(prompt string) error
+
 // Model is the main TUI model.
 type Model struct {
 	// Current view
 	view ViewMode
+
+	// Input mode
+	inputMode InputMode
 
 	// UI components
 	spinner   spinner.Model
@@ -61,35 +77,100 @@ type Model struct {
 	taskSelectedIdx int
 
 	// State
-	loading   bool
-	err       error
-	width     int
-	height    int
-	quitting  bool
+	loading      bool
+	err          error
+	width        int
+	height       int
+	quitting     bool
+	statusMsg    string
+	statusIsErr  bool
 
-	// Config display
+	// Config
+	config       *config.Config
+	configPath   string
 	configKeys   []string
 	configValues map[string]string
+
+	// Callbacks
+	onSubmit SubmitHandler
+}
+
+// Option is a functional option for configuring the Model.
+type Option func(*Model)
+
+// WithConfig sets the configuration for the TUI.
+func WithConfig(cfg *config.Config) Option {
+	return func(m *Model) {
+		m.config = cfg
+		m.updateConfigDisplay()
+	}
+}
+
+// WithConfigPath sets the configuration file path.
+func WithConfigPath(path string) Option {
+	return func(m *Model) {
+		m.configPath = path
+	}
+}
+
+// WithSubmitHandler sets the callback for prompt submission.
+func WithSubmitHandler(handler SubmitHandler) Option {
+	return func(m *Model) {
+		m.onSubmit = handler
+	}
 }
 
 // NewModel creates a new TUI model.
-func NewModel() Model {
+func NewModel(opts ...Option) Model {
 	s := spinner.New()
 	s.Spinner = spinner.Dot
 	s.Style = SpinnerStyle
 
 	ti := textinput.New()
-	ti.Placeholder = "Enter task description..."
-	ti.CharLimit = 256
-	ti.Width = 50
+	ti.Placeholder = "Enter your prompt..."
+	ti.CharLimit = 1000
+	ti.Width = 60
 
-	return Model{
+	m := Model{
 		view:         ViewMain,
+		inputMode:    InputNone,
 		spinner:      s,
 		textInput:    ti,
 		workflows:    []Workflow{},
 		tasks:        []Task{},
 		configValues: make(map[string]string),
+		config:       config.DefaultConfig(),
+	}
+
+	// Apply options
+	for _, opt := range opts {
+		opt(&m)
+	}
+
+	// Update config display
+	m.updateConfigDisplay()
+
+	return m
+}
+
+// updateConfigDisplay updates the config values for display.
+func (m *Model) updateConfigDisplay() {
+	if m.config == nil {
+		return
+	}
+
+	m.configValues = map[string]string{
+		"provider":           m.config.Claude.Provider,
+		"model":              m.config.Claude.Model,
+		"working_dir":        m.config.Claude.WorkingDir,
+		"temporal_address":   m.config.Temporal.Address,
+		"temporal_namespace": m.config.Temporal.Namespace,
+		"task_queue":         m.config.Temporal.TaskQueue,
+		"memory_type":        m.config.Memory.Type,
+		"storage_type":       m.config.Storage.Type,
+		"rag_enabled":        fmt.Sprintf("%v", m.config.RAG.Enabled),
+		"mcp_enabled":        fmt.Sprintf("%v", m.config.MCP.Enabled),
+		"lsp_enabled":        fmt.Sprintf("%v", m.config.LSP.Enabled),
 	}
 }
 
@@ -109,7 +190,13 @@ type (
 	errMsg struct {
 		err error
 	}
-	tickMsg time.Time
+	tickMsg        time.Time
+	statusMsg      string
+	configLoaded   struct{ cfg *config.Config }
+	workflowSubmitted struct {
+		id    string
+		title string
+	}
 )
 
 // Update implements tea.Model.
@@ -117,12 +204,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	var cmds []tea.Cmd
 
+	// Handle input mode first
+	if m.inputMode != InputNone {
+		return m.handleInputMode(msg)
+	}
+
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		// Clear status message on any key
+		m.statusMsg = ""
+		m.statusIsErr = false
+
 		switch msg.String() {
-		case "ctrl+c", "q":
+		case "ctrl+c":
 			m.quitting = true
 			return m, tea.Quit
+
+		case "q":
+			// Only quit if not in input mode
+			if m.inputMode == InputNone {
+				m.quitting = true
+				return m, tea.Quit
+			}
 
 		case "tab":
 			// Cycle through views
@@ -139,6 +242,27 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.view = ViewConfig
 		case "?", "h":
 			m.view = ViewHelp
+
+		case "n":
+			// New prompt - enter input mode
+			if m.view == ViewMain {
+				m.inputMode = InputPrompt
+				m.textInput.Reset()
+				m.textInput.Placeholder = "Enter your prompt..."
+				m.textInput.Focus()
+				return m, textinput.Blink
+			}
+
+		case "c":
+			// Load config - enter config path input mode
+			if m.view == ViewConfig {
+				m.inputMode = InputConfigPath
+				m.textInput.Reset()
+				m.textInput.Placeholder = "Enter config file path..."
+				m.textInput.SetValue(m.configPath)
+				m.textInput.Focus()
+				return m, textinput.Blink
+			}
 
 		case "up", "k":
 			if m.view == ViewWorkflows && m.selectedIdx > 0 {
@@ -171,6 +295,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		m.textInput.Width = m.width - 10
+		if m.textInput.Width < 30 {
+			m.textInput.Width = 30
+		}
 
 	case workflowsLoadedMsg:
 		m.workflows = msg.workflows
@@ -180,8 +308,29 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.tasks = msg.tasks
 		m.loading = false
 
+	case configLoaded:
+		m.config = msg.cfg
+		m.updateConfigDisplay()
+		m.statusMsg = "Config loaded successfully"
+		m.statusIsErr = false
+		m.loading = false
+
+	case workflowSubmitted:
+		// Add to workflows list
+		m.workflows = append([]Workflow{{
+			ID:        msg.id,
+			Title:     msg.title,
+			Status:    "running",
+			StartTime: time.Now(),
+		}}, m.workflows...)
+		m.statusMsg = fmt.Sprintf("Workflow started: %s", msg.id[:8])
+		m.statusIsErr = false
+		m.loading = false
+
 	case errMsg:
 		m.err = msg.err
+		m.statusMsg = msg.err.Error()
+		m.statusIsErr = true
 		m.loading = false
 
 	case spinner.TickMsg:
@@ -190,6 +339,123 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, tea.Batch(cmds...)
+}
+
+// handleInputMode handles key events when in input mode.
+func (m Model) handleInputMode(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
+
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "ctrl+c":
+			m.quitting = true
+			return m, tea.Quit
+
+		case "esc":
+			// Cancel input mode
+			m.inputMode = InputNone
+			m.textInput.Blur()
+			return m, nil
+
+		case "enter":
+			// Submit input
+			value := strings.TrimSpace(m.textInput.Value())
+			if value == "" {
+				m.inputMode = InputNone
+				m.textInput.Blur()
+				return m, nil
+			}
+
+			switch m.inputMode {
+			case InputPrompt:
+				m.inputMode = InputNone
+				m.textInput.Blur()
+				return m.submitPrompt(value)
+
+			case InputConfigPath:
+				m.inputMode = InputNone
+				m.textInput.Blur()
+				return m.loadConfig(value)
+			}
+
+			m.inputMode = InputNone
+			m.textInput.Blur()
+			return m, nil
+		}
+	}
+
+	// Update text input
+	m.textInput, cmd = m.textInput.Update(msg)
+	return m, cmd
+}
+
+// submitPrompt handles prompt submission.
+func (m Model) submitPrompt(prompt string) (tea.Model, tea.Cmd) {
+	m.loading = true
+
+	// If we have a submit handler, call it
+	if m.onSubmit != nil {
+		err := m.onSubmit(prompt)
+		if err != nil {
+			m.statusMsg = fmt.Sprintf("Error: %v", err)
+			m.statusIsErr = true
+			m.loading = false
+			return m, nil
+		}
+	}
+
+	// Create a local workflow entry
+	workflowID := fmt.Sprintf("wf-%d", time.Now().UnixNano())
+	m.workflows = append([]Workflow{{
+		ID:        workflowID,
+		Title:     truncateString(prompt, 50),
+		Status:    "running",
+		StartTime: time.Now(),
+		Tasks: []Task{{
+			ID:        fmt.Sprintf("task-%d", time.Now().UnixNano()),
+			Title:     prompt,
+			Status:    "in_progress",
+			AgentType: "orchestrator",
+			StartTime: time.Now(),
+		}},
+	}}, m.workflows...)
+
+	m.statusMsg = fmt.Sprintf("Workflow started: %s", workflowID[:10])
+	m.statusIsErr = false
+	m.loading = false
+
+	return m, nil
+}
+
+// loadConfig loads configuration from a file.
+func (m Model) loadConfig(path string) (tea.Model, tea.Cmd) {
+	m.loading = true
+	m.configPath = path
+
+	cfg, err := config.LoadConfig(path)
+	if err != nil {
+		m.statusMsg = fmt.Sprintf("Config error: %v", err)
+		m.statusIsErr = true
+		m.loading = false
+		return m, nil
+	}
+
+	m.config = cfg
+	m.updateConfigDisplay()
+	m.statusMsg = "Config loaded: " + path
+	m.statusIsErr = false
+	m.loading = false
+
+	return m, nil
+}
+
+// truncateString truncates a string to maxLen characters.
+func truncateString(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen-3] + "..."
 }
 
 // View implements tea.Model.
@@ -271,8 +537,39 @@ func (m Model) renderTabs() string {
 }
 
 func (m Model) renderFooter() string {
-	help := HelpStyle.Render("q: quit • tab: switch view • ↑↓: navigate • enter: select")
-	return help
+	var parts []string
+
+	// Show status message if present
+	if m.statusMsg != "" {
+		if m.statusIsErr {
+			parts = append(parts, ErrorStyle.Render("Error: "+m.statusMsg))
+		} else {
+			parts = append(parts, SuccessStyle.Render(m.statusMsg))
+		}
+	}
+
+	// Context-specific help
+	var helpText string
+	if m.inputMode != InputNone {
+		helpText = "enter: submit • esc: cancel"
+	} else {
+		switch m.view {
+		case ViewMain:
+			helpText = "n: new prompt • q: quit • tab: switch view"
+		case ViewConfig:
+			helpText = "c: load config • q: quit • tab: switch view"
+		case ViewWorkflows:
+			helpText = "↑↓: navigate • enter: view tasks • q: quit"
+		case ViewTasks:
+			helpText = "↑↓: navigate • esc: back • q: quit"
+		default:
+			helpText = "q: quit • tab: switch view • ↑↓: navigate"
+		}
+	}
+
+	parts = append(parts, HelpStyle.Render(helpText))
+
+	return lipgloss.JoinVertical(lipgloss.Left, parts...)
 }
 
 func (m Model) viewMain() string {
@@ -281,12 +578,28 @@ func (m Model) viewMain() string {
 	b.WriteString(TitleStyle.Render("Welcome to Claude Orchestrator"))
 	b.WriteString("\n\n")
 
+	// Show input mode if active
+	if m.inputMode == InputPrompt {
+		b.WriteString(SubtitleStyle.Render("New Workflow"))
+		b.WriteString("\n\n")
+		b.WriteString("Enter your prompt:\n")
+		b.WriteString(BoxStyle.Render(m.textInput.View()))
+		b.WriteString("\n\n")
+		b.WriteString(HelpStyle.Render("Press Enter to submit, Esc to cancel"))
+		return b.String()
+	}
+
 	// Status box
+	provider := "api"
+	if m.config != nil {
+		provider = m.config.Claude.Provider
+	}
+
 	statusBox := BoxStyle.Render(
 		lipgloss.JoinVertical(
 			lipgloss.Left,
 			SubtitleStyle.Render("Status"),
-			fmt.Sprintf("  %s Provider: %s", IconBullet, "Claude Code"),
+			fmt.Sprintf("  %s Provider: %s", IconBullet, provider),
 			fmt.Sprintf("  %s Workflows: %d", IconBullet, len(m.workflows)),
 			fmt.Sprintf("  %s Active Tasks: %d", IconBullet, m.countActiveTasks()),
 		),
@@ -294,6 +607,12 @@ func (m Model) viewMain() string {
 
 	b.WriteString(statusBox)
 	b.WriteString("\n\n")
+
+	// Prompt input section
+	b.WriteString(SubtitleStyle.Render("Start New Workflow"))
+	b.WriteString("\n")
+	b.WriteString(fmt.Sprintf("  %s Press [n] to enter a new prompt\n", IconArrow))
+	b.WriteString("\n")
 
 	// Quick actions
 	b.WriteString(SubtitleStyle.Render("Quick Actions"))
@@ -394,12 +713,31 @@ func (m Model) viewConfig() string {
 	b.WriteString(TitleStyle.Render("Configuration"))
 	b.WriteString("\n\n")
 
+	// Show input mode if active
+	if m.inputMode == InputConfigPath {
+		b.WriteString(SubtitleStyle.Render("Load Configuration"))
+		b.WriteString("\n\n")
+		b.WriteString("Enter config file path:\n")
+		b.WriteString(BoxStyle.Render(m.textInput.View()))
+		b.WriteString("\n\n")
+		b.WriteString(HelpStyle.Render("Press Enter to load, Esc to cancel"))
+		return b.String()
+	}
+
+	// Config file info
+	configPath := m.configPath
+	if configPath == "" {
+		configPath = "(default config)"
+	}
+	b.WriteString(fmt.Sprintf("Config: %s\n", HelpStyle.Render(configPath)))
+	b.WriteString(fmt.Sprintf("  %s Press [c] to load a config file\n\n", IconArrow))
+
 	// Provider section
 	providerBox := BoxStyle.Render(
 		lipgloss.JoinVertical(
 			lipgloss.Left,
 			SubtitleStyle.Render("Claude Provider"),
-			fmt.Sprintf("  Provider:     %s", m.getConfigValue("provider", "claude_code")),
+			fmt.Sprintf("  Provider:     %s", m.getConfigValue("provider", "api")),
 			fmt.Sprintf("  Model:        %s", m.getConfigValue("model", "claude-sonnet-4-20250514")),
 			fmt.Sprintf("  Working Dir:  %s", m.getConfigValue("working_dir", ".")),
 		),
@@ -418,6 +756,21 @@ func (m Model) viewConfig() string {
 		),
 	)
 	b.WriteString(temporalBox)
+	b.WriteString("\n\n")
+
+	// Features section
+	featuresBox := BoxStyle.Render(
+		lipgloss.JoinVertical(
+			lipgloss.Left,
+			SubtitleStyle.Render("Features"),
+			fmt.Sprintf("  RAG:       %s", m.getConfigValue("rag_enabled", "true")),
+			fmt.Sprintf("  MCP:       %s", m.getConfigValue("mcp_enabled", "false")),
+			fmt.Sprintf("  LSP:       %s", m.getConfigValue("lsp_enabled", "false")),
+			fmt.Sprintf("  Memory:    %s", m.getConfigValue("memory_type", "inmemory")),
+			fmt.Sprintf("  Storage:   %s", m.getConfigValue("storage_type", "local")),
+		),
+	)
+	b.WriteString(featuresBox)
 
 	return b.String()
 }
@@ -434,22 +787,28 @@ func (m Model) viewHelp() string {
   ↑/k      Move up
   ↓/j      Move down
   Enter    Select item
-  ESC      Go back
+  ESC      Go back / Cancel
   q        Quit
 
+Actions:
+  n        New prompt (from Main view)
+  c        Load config file (from Config view)
+
 Views:
-  [1] Main      - Dashboard with status overview
+  [1] Main      - Dashboard and prompt entry
   [2] Workflows - List and manage workflows
   [3] Tasks     - View task progress
-  [4] Config    - View configuration
+  [4] Config    - View and load configuration
 
 Workflows:
+  • Press 'n' on Main view to start a new workflow
+  • Enter your prompt and press Enter to submit
   • Select a workflow and press Enter to see its tasks
-  • Tasks show their status with checkboxes
 
 Configuration:
-  • Edit config.yaml to change settings
-  • Set CLAUDE_PROVIDER environment variable to switch providers`
+  • Press 'c' on Config view to load a config file
+  • Enter the path to your config.yaml or config.json
+  • Config is also loaded via --config flag or CONFIG_PATH env`
 
 	b.WriteString(help)
 
