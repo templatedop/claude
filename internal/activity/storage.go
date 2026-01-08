@@ -317,8 +317,8 @@ type ListStorageFilesResult struct {
 	IsTruncated bool                    `json:"is_truncated"`
 }
 
-// ListFiles lists files in cloud storage.
-func (a *StorageActivities) ListFiles(ctx context.Context, req ListStorageFilesRequest) (*ListStorageFilesResult, error) {
+// ListStorageFiles lists files in cloud storage.
+func (a *StorageActivities) ListStorageFiles(ctx context.Context, req ListStorageFilesRequest) (*ListStorageFilesResult, error) {
 	logger := activity.GetLogger(ctx)
 	logger.Info("Listing files", "bucket", req.Bucket, "prefix", req.Prefix)
 
@@ -371,8 +371,8 @@ type CopyStorageFileRequest struct {
 	DestinationPath   string `json:"destination_path"`
 }
 
-// CopyFile copies a file within cloud storage.
-func (a *StorageActivities) CopyFile(ctx context.Context, req CopyStorageFileRequest) (*GetFileMetadataResult, error) {
+// CopyStorageFile copies a file within cloud storage.
+func (a *StorageActivities) CopyStorageFile(ctx context.Context, req CopyStorageFileRequest) (*GetFileMetadataResult, error) {
 	logger := activity.GetLogger(ctx)
 	logger.Info("Copying file",
 		"source", fmt.Sprintf("%s/%s", req.SourceBucket, req.SourcePath),
