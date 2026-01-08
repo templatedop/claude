@@ -21,6 +21,12 @@ type Config struct {
 	Storage  StorageConfig  `json:"storage" yaml:"storage"`
 	RAG      RAGConfig      `json:"rag" yaml:"rag"`
 
+	// MCP (Model Context Protocol) servers
+	MCP MCPConfig `json:"mcp" yaml:"mcp"`
+
+	// LSP (Language Server Protocol) settings
+	LSP LSPConfig `json:"lsp" yaml:"lsp"`
+
 	// Observability
 	Logging LoggingConfig `json:"logging" yaml:"logging"`
 	Metrics MetricsConfig `json:"metrics" yaml:"metrics"`
@@ -36,6 +42,66 @@ type Config struct {
 
 	// Workflow settings
 	Workflow WorkflowConfig `json:"workflow" yaml:"workflow"`
+}
+
+// MCPConfig contains MCP server configurations.
+type MCPConfig struct {
+	// Enabled enables MCP server functionality
+	Enabled bool `json:"enabled" yaml:"enabled"`
+
+	// GitLab MCP server configuration
+	GitLab GitLabMCPConfig `json:"gitlab" yaml:"gitlab"`
+
+	// Database MCP server configuration
+	Database DatabaseMCPConfig `json:"database" yaml:"database"`
+}
+
+// GitLabMCPConfig contains GitLab MCP server settings.
+type GitLabMCPConfig struct {
+	Enabled        bool   `json:"enabled" yaml:"enabled"`
+	BaseURL        string `json:"base_url" yaml:"base_url" env:"GITLAB_URL"`
+	Token          string `json:"token" yaml:"token" env:"GITLAB_TOKEN"`
+	DefaultProject string `json:"default_project" yaml:"default_project" env:"GITLAB_PROJECT"`
+}
+
+// DatabaseMCPConfig contains Database MCP server settings.
+type DatabaseMCPConfig struct {
+	Enabled       bool     `json:"enabled" yaml:"enabled"`
+	Driver        string   `json:"driver" yaml:"driver"`
+	Host          string   `json:"host" yaml:"host" env:"DB_HOST"`
+	Port          int      `json:"port" yaml:"port" env:"DB_PORT"`
+	User          string   `json:"user" yaml:"user" env:"DB_USER"`
+	Password      string   `json:"password" yaml:"password" env:"DB_PASSWORD"`
+	Database      string   `json:"database" yaml:"database" env:"DB_NAME"`
+	SSLMode       string   `json:"ssl_mode" yaml:"ssl_mode"`
+	MaxRows       int      `json:"max_rows" yaml:"max_rows"`
+	ReadOnly      bool     `json:"read_only" yaml:"read_only"`
+	AllowedTables []string `json:"allowed_tables" yaml:"allowed_tables"`
+}
+
+// LSPConfig contains LSP server configuration.
+type LSPConfig struct {
+	// Enabled enables the LSP server
+	Enabled bool `json:"enabled" yaml:"enabled"`
+
+	// Address is the LSP server address (for TCP mode)
+	Address string `json:"address" yaml:"address"`
+
+	// Languages specifies which language handlers to enable
+	Languages []string `json:"languages" yaml:"languages"`
+
+	// Features specifies which LSP features to enable
+	Features LSPFeatures `json:"features" yaml:"features"`
+}
+
+// LSPFeatures specifies enabled LSP features.
+type LSPFeatures struct {
+	Hover       bool `json:"hover" yaml:"hover"`
+	Completion  bool `json:"completion" yaml:"completion"`
+	Definition  bool `json:"definition" yaml:"definition"`
+	References  bool `json:"references" yaml:"references"`
+	Symbols     bool `json:"symbols" yaml:"symbols"`
+	Diagnostics bool `json:"diagnostics" yaml:"diagnostics"`
 }
 
 // SkillConfig defines a reusable skill that can be assigned to agents.
@@ -396,6 +462,35 @@ func DefaultConfig() *Config {
 				Model:       "claude-sonnet-4-20250514",
 				MaxTokens:   2048,
 				Temperature: 0.1,
+			},
+		},
+		MCP: MCPConfig{
+			Enabled: false,
+			GitLab: GitLabMCPConfig{
+				Enabled: false,
+				BaseURL: "https://gitlab.com",
+			},
+			Database: DatabaseMCPConfig{
+				Enabled:  false,
+				Driver:   "postgres",
+				Host:     "localhost",
+				Port:     5432,
+				SSLMode:  "disable",
+				MaxRows:  100,
+				ReadOnly: true,
+			},
+		},
+		LSP: LSPConfig{
+			Enabled:   false,
+			Address:   "localhost:9999",
+			Languages: []string{"go"},
+			Features: LSPFeatures{
+				Hover:       true,
+				Completion:  true,
+				Definition:  true,
+				References:  true,
+				Symbols:     true,
+				Diagnostics: true,
 			},
 		},
 		Workflow: WorkflowConfig{

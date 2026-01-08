@@ -37,7 +37,23 @@ A Go + Temporal-based orchestration system for coordinating multiple Claude AI a
 - **Parallel Execution**: Execute independent tasks concurrently
 - **Memory System**: Shared memory between agents with namespacing
 - **Fault Tolerance**: Built-in retries and durability via Temporal
-- **Multiple Interfaces**: CLI, REST API, and direct Temporal workflow execution
+- **Multiple Interfaces**: CLI, REST API, TUI, and direct Temporal workflow execution
+- **Configurable Skills**: Assign reusable skill sets to agents
+
+### Interactive TUI
+- **Bubble Tea Framework**: Beautiful terminal UI built with Charmbracelet libraries
+- **Multiple Views**: Dashboard, Workflows, Tasks, Config, and Help views
+- **Keyboard Navigation**: Vim-style (j/k) and arrow key navigation
+- **Real-time Updates**: Live workflow and task status monitoring
+- **Styled Output**: Color-coded agents, statuses, and progress indicators
+
+### Integration Features
+- **MCP (Model Context Protocol)**: Native Go MCP servers for tool integration
+  - **GitLab MCP**: Issues, merge requests, pipelines, CI/CD management
+  - **Database MCP**: SQL queries, schema inspection, data sampling
+- **LSP (Language Server Protocol)**: Code intelligence for orchestrated tasks
+  - Hover information, completions, symbols, diagnostics
+  - Go language support with extensible architecture
 
 ### Advanced Features (Configurable)
 - **Document Analysis**: Read and analyze project documents to extract requirements
@@ -724,6 +740,288 @@ Flags:
 claude-orchestrator cancel <workflow-id>
 ```
 
+### Configuration Commands
+
+```bash
+# Show current configuration
+claude-orchestrator config show
+
+# Show config in JSON format
+claude-orchestrator config show --output json
+
+# Set a configuration value
+claude-orchestrator config set claude.provider claude_code
+```
+
+## Interactive TUI
+
+The orchestrator includes a beautiful terminal UI built with [Bubble Tea](https://github.com/charmbracelet/bubbletea) and [Lip Gloss](https://github.com/charmbracelet/lipgloss).
+
+### Starting the TUI
+
+```bash
+# Launch the TUI
+claude-orchestrator tui
+
+# Or with a specific config
+claude-orchestrator tui --config config.yaml
+```
+
+### TUI Navigation
+
+| Key | Action |
+|-----|--------|
+| `Tab` / `Shift+Tab` | Cycle through views |
+| `1-4` | Jump to specific view |
+| `j` / `↓` | Move down |
+| `k` / `↑` | Move up |
+| `Enter` | Select item |
+| `Esc` | Go back |
+| `?` | Toggle help |
+| `q` / `Ctrl+C` | Quit |
+
+### Views
+
+1. **Main Dashboard**: Overview of system status and active workflows
+2. **Workflows**: List and manage workflows with status indicators
+3. **Tasks**: View task details and progress
+4. **Config**: Display current configuration settings
+5. **Help**: Keyboard shortcuts and usage guide
+
+## Agent Skills
+
+Skills are reusable capability definitions that can be assigned to agents. They define tools, prompts, and behaviors.
+
+### Skill Configuration
+
+```yaml
+skills:
+  code_generation:
+    name: "Code Generation"
+    description: "Generate code from specifications"
+    enabled: true
+    tools:
+      - "Read"
+      - "Write"
+      - "Edit"
+    prompts:
+      before: "Before generating code, analyze the requirements."
+      after: "Verify the code compiles and follows best practices."
+    commands:
+      - "go build ./..."
+      - "go test ./..."
+
+  security_audit:
+    name: "Security Audit"
+    description: "Check for security vulnerabilities"
+    enabled: true
+    tools:
+      - "Read"
+      - "Grep"
+    prompts:
+      before: "Focus on OWASP Top 10 vulnerabilities."
+      after: "Prioritize findings by severity."
+```
+
+### Assigning Skills to Agents
+
+```yaml
+agents:
+  coder:
+    name: "Coder"
+    model: "claude-sonnet-4-20250514"
+    skills:
+      - "code_generation"
+      - "refactoring"
+      - "test_writing"
+
+  reviewer:
+    name: "Reviewer"
+    skills:
+      - "code_review"
+      - "security_audit"
+```
+
+### Default Skills
+
+| Skill | Description |
+|-------|-------------|
+| `code_generation` | Generate code from specifications |
+| `refactoring` | Improve existing code structure |
+| `bug_fixing` | Identify and fix bugs |
+| `test_writing` | Write unit and integration tests |
+| `code_review` | Review code for quality |
+| `security_audit` | Check for security issues |
+
+## MCP Servers (Model Context Protocol)
+
+The orchestrator includes native Go MCP servers that provide standardized tool access for LLMs.
+
+### GitLab MCP Server
+
+Provides full GitLab integration for issues, merge requests, and CI/CD pipelines.
+
+#### Configuration
+
+```yaml
+mcp:
+  enabled: true
+  gitlab:
+    enabled: true
+    base_url: "https://gitlab.com"
+    token: ""  # Or set GITLAB_TOKEN env var
+    default_project: "group/project"
+```
+
+#### Available Tools
+
+| Tool | Description |
+|------|-------------|
+| `gitlab_list_issues` | List project issues with filters |
+| `gitlab_get_issue` | Get issue details |
+| `gitlab_create_issue` | Create a new issue |
+| `gitlab_list_merge_requests` | List merge requests |
+| `gitlab_get_merge_request` | Get MR details |
+| `gitlab_create_merge_request` | Create a new MR |
+| `gitlab_list_pipelines` | List CI/CD pipelines |
+| `gitlab_get_pipeline` | Get pipeline details |
+| `gitlab_trigger_pipeline` | Trigger a new pipeline |
+| `gitlab_retry_pipeline` | Retry a failed pipeline |
+| `gitlab_cancel_pipeline` | Cancel a running pipeline |
+| `gitlab_add_mr_comment` | Add comment to MR |
+| `gitlab_get_mr_comments` | Get MR comments |
+
+#### Example Usage
+
+```go
+// List open issues
+result := gitlabMCP.HandleToolCall(ctx, "gitlab_list_issues", map[string]interface{}{
+    "project": "mygroup/myproject",
+    "state":   "opened",
+    "labels":  "bug,priority:high",
+})
+
+// Create a merge request
+result := gitlabMCP.HandleToolCall(ctx, "gitlab_create_merge_request", map[string]interface{}{
+    "source_branch": "feature/new-api",
+    "target_branch": "main",
+    "title":         "Add new API endpoints",
+    "description":   "Implements user management API",
+})
+```
+
+### Database MCP Server
+
+Provides SQL query capabilities with safety features.
+
+#### Configuration
+
+```yaml
+mcp:
+  database:
+    enabled: true
+    driver: "postgres"
+    host: "localhost"
+    port: 5432
+    user: "postgres"
+    password: ""
+    database: "mydb"
+    ssl_mode: "disable"
+    max_rows: 100
+    read_only: true  # Only allow SELECT queries
+    allowed_tables:  # Restrict to specific tables
+      - "users"
+      - "orders"
+```
+
+#### Available Tools
+
+| Tool | Description |
+|------|-------------|
+| `db_query` | Execute SELECT query |
+| `db_exec` | Execute INSERT/UPDATE/DELETE (if not read-only) |
+| `db_list_tables` | List all tables |
+| `db_describe_table` | Get table schema |
+| `db_explain` | Explain query execution plan |
+| `db_sample` | Get sample rows from a table |
+
+#### Example Usage
+
+```go
+// Query data
+result := dbMCP.HandleToolCall(ctx, "db_query", map[string]interface{}{
+    "query": "SELECT * FROM users WHERE active = true LIMIT 10",
+})
+
+// Describe table structure
+result := dbMCP.HandleToolCall(ctx, "db_describe_table", map[string]interface{}{
+    "table": "orders",
+})
+```
+
+## LSP Server (Language Server Protocol)
+
+The orchestrator includes an LSP server for code intelligence features.
+
+### Configuration
+
+```yaml
+lsp:
+  enabled: true
+  address: "localhost:9999"
+  languages:
+    - "go"
+  features:
+    hover: true
+    completion: true
+    definition: true
+    references: true
+    symbols: true
+    diagnostics: true
+```
+
+### Supported Features
+
+| Feature | Description |
+|---------|-------------|
+| **Hover** | Show documentation and type info |
+| **Completion** | Code completion with snippets |
+| **Definition** | Go to definition |
+| **References** | Find all references |
+| **Symbols** | Document symbols outline |
+| **Diagnostics** | Syntax error reporting |
+
+### Go Language Support
+
+The Go handler provides:
+
+- **Keyword completion**: All Go keywords
+- **Builtin completion**: Built-in functions with documentation
+- **Symbol completion**: Functions, types, variables from current file
+- **Snippet templates**: `func`, `if`, `for`, `err` handling, etc.
+- **Hover documentation**: For builtins and local definitions
+- **Document symbols**: Functions, types, constants, variables
+- **Syntax diagnostics**: Parse error reporting
+
+### Extending LSP
+
+To add support for additional languages:
+
+```go
+// Create a handler
+type PythonHandler struct{}
+
+func (h *PythonHandler) RegisterWithServer(s *lsp.Server) {
+    s.SetHoverHandler(h.Hover)
+    s.SetCompletionHandler(h.Completion)
+    // ... other handlers
+}
+
+// Register with server
+pythonHandler := &PythonHandler{}
+pythonHandler.RegisterWithServer(lspServer)
+```
+
 ## API Endpoints
 
 | Method | Endpoint | Description |
@@ -853,6 +1151,18 @@ claude-orchestrator/
 │   ├── rag/
 │   │   ├── chunker.go       # Document chunking
 │   │   └── embeddings.go    # Embedding generation
+│   ├── mcp/                 # Model Context Protocol
+│   │   ├── server.go        # MCP server framework
+│   │   ├── gitlab/          # GitLab MCP server
+│   │   │   └── gitlab.go    # Issues, MRs, pipelines
+│   │   └── database/        # Database MCP server
+│   │       └── database.go  # SQL queries, schema
+│   ├── lsp/                 # Language Server Protocol
+│   │   ├── server.go        # LSP server implementation
+│   │   └── golang.go        # Go language handler
+│   ├── tui/                 # Terminal UI
+│   │   ├── model.go         # Bubble Tea model
+│   │   └── styles.go        # Lip Gloss styles
 │   └── domain/
 │       ├── agent.go         # Agent types
 │       ├── task.go          # Task definitions

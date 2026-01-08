@@ -441,6 +441,60 @@ features:
   code_review: true
   parallel_execution: true
 
+# MCP (Model Context Protocol) Configuration
+# MCP provides a standardized way to expose tools and resources to LLMs
+mcp:
+  enabled: true
+
+  # GitLab MCP Server - Provides access to GitLab issues, MRs, pipelines
+  gitlab:
+    enabled: true
+    # GitLab instance URL (default: https://gitlab.com)
+    base_url: "https://gitlab.com"
+    # Personal Access Token with api scope
+    # Can also be set via GITLAB_TOKEN environment variable
+    token: ""
+    # Default project path (e.g., "group/project")
+    # Can also be set via GITLAB_PROJECT environment variable
+    default_project: ""
+
+  # Database MCP Server - Provides SQL query capabilities
+  database:
+    enabled: false
+    # Database driver: "postgres", "mysql"
+    driver: "postgres"
+    # Connection settings
+    host: "localhost"
+    port: 5432
+    user: "postgres"
+    password: ""
+    database: "mydb"
+    ssl_mode: "disable"
+    # Maximum rows to return per query
+    max_rows: 100
+    # Enable read-only mode (only SELECT queries allowed)
+    read_only: true
+    # Restrict access to specific tables (empty = all tables)
+    allowed_tables: []
+
+# LSP (Language Server Protocol) Configuration
+# LSP provides code intelligence features for editors and tools
+lsp:
+  enabled: false
+  # Address for LSP server (TCP mode)
+  address: "localhost:9999"
+  # Supported languages
+  languages:
+    - "go"
+  # Enable/disable specific features
+  features:
+    hover: true
+    completion: true
+    definition: true
+    references: true
+    symbols: true
+    diagnostics: true
+
 # Logging Configuration
 logging:
   level: "info"
