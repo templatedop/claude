@@ -95,10 +95,7 @@ func NewModel() Model {
 
 // Init implements tea.Model.
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(
-		m.spinner.Tick,
-		tea.EnterAltScreen,
-	)
+	return m.spinner.Tick
 }
 
 // Message types
