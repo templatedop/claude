@@ -536,14 +536,72 @@ orchestration workflows. The TUI provides:
 			// Build TUI options
 			var opts []tui.Option
 
-			// Load config if path provided
+			// Load config
+			var cfg *config.Config
+			var err error
 			if cfgPath != "" {
-				cfg, err := config.LoadConfig(cfgPath)
+				cfg, err = config.LoadConfig(cfgPath)
 				if err != nil {
 					return fmt.Errorf("failed to load config: %w", err)
 				}
 				opts = append(opts, tui.WithConfig(cfg), tui.WithConfigPath(cfgPath))
+			} else {
+				cfg = config.DefaultConfig()
+				// Apply CLI flags
+				cfg.Temporal.Address = temporalAddr
+				cfg.Temporal.Namespace = temporalNS
+				cfg.Temporal.TaskQueue = taskQueue
+				opts = append(opts, tui.WithConfig(cfg))
 			}
+
+			// Create Temporal client for workflow submission
+			c, err := client.Dial(client.Options{
+				HostPort:  cfg.Temporal.Address,
+				Namespace: cfg.Temporal.Namespace,
+			})
+			if err != nil {
+				return fmt.Errorf("failed to connect to Temporal: %w", err)
+			}
+			defer c.Close()
+
+			// Create submit handler that starts workflows in Temporal
+			submitHandler := func(prompt string) error {
+				taskID := uuid.New().String()
+				task := domain.Task{
+					ID:          taskID,
+					Title:       prompt,
+					Description: prompt,
+					Status:      domain.TaskStatusPending,
+					Priority:    domain.TaskPriorityNormal,
+					CreatedAt:   time.Now(),
+					Context: domain.TaskContext{
+						WorkingDir: cfg.Claude.WorkingDir,
+						TimeoutSec: 60 * 60, // 1 hour default
+					},
+				}
+
+				input := workflow.OrchestratorInput{
+					Task: task,
+					Config: workflow.OrchestratorConfig{
+						MaxAgents:      10,
+						MaxRetries:     3,
+						TimeoutMinutes: 60,
+						EnableReview:   true,
+						ParallelTasks:  true,
+					},
+				}
+
+				workflowID := fmt.Sprintf("orchestrator-%s", taskID)
+				options := client.StartWorkflowOptions{
+					ID:        workflowID,
+					TaskQueue: cfg.Temporal.TaskQueue,
+				}
+
+				_, err := c.ExecuteWorkflow(context.Background(), options, workflow.OrchestratorWorkflow, input)
+				return err
+			}
+
+			opts = append(opts, tui.WithSubmitHandler(submitHandler))
 
 			// Create and run the TUI
 			model := tui.NewModel(opts...)
