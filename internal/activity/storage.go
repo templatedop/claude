@@ -149,7 +149,7 @@ type DeleteStorageFileRequest struct {
 }
 
 // DeleteStorageFile deletes a file from cloud storage.
-func (a *StorageActivities) DeleteFile(ctx context.Context, req DeleteStorageFileRequest) error {
+func (a *StorageActivities) DeleteStorageFile(ctx context.Context, req DeleteStorageFileRequest) error {
 	logger := activity.GetLogger(ctx)
 	logger.Info("Deleting file", "bucket", req.Bucket, "path", req.Path)
 

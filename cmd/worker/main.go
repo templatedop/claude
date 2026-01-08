@@ -388,7 +388,7 @@ func main() {
 	if storageActivities != nil {
 		w.RegisterActivity(storageActivities.Upload)
 		w.RegisterActivity(storageActivities.Download)
-		w.RegisterActivity(storageActivities.DeleteFile)
+		w.RegisterActivity(storageActivities.DeleteStorageFile)
 		w.RegisterActivity(storageActivities.GetMetadata)
 		w.RegisterActivity(storageActivities.GenerateUploadURL)
 		w.RegisterActivity(storageActivities.GenerateDownloadURL)
